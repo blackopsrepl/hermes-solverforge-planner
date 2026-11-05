@@ -52,6 +52,21 @@ CREATE TABLE IF NOT EXISTS applied (
     proposal_id TEXT NOT NULL,
     applied_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS calendars (
+    source TEXT PRIMARY KEY,
+    read_at TEXT NOT NULL,
+    window_start TEXT NOT NULL,
+    window_end TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS events (
+    event_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    start TEXT NOT NULL,
+    end TEXT NOT NULL,
+    seen_in TEXT,
+    seen_at TEXT,
+    handed_at TEXT
+);
 CREATE TABLE IF NOT EXISTS proposals (
     id TEXT PRIMARY KEY,
     created_at TEXT NOT NULL,
@@ -102,6 +117,9 @@ class Store:
         with self._lock:
             self._conn.execute("PRAGMA foreign_keys = ON")
             self._conn.executescript(SCHEMA)
+            columns = {row[1] for row in self._conn.execute("PRAGMA table_info(proposals)")}
+            if "made_at" not in columns:  # databases from 0.1.0
+                self._conn.execute("ALTER TABLE proposals ADD COLUMN made_at TEXT")
             self._conn.commit()
 
     @classmethod
@@ -179,6 +197,7 @@ class Store:
     def unschedule(self, task_id: str) -> dict | None:
         self._write([
             ("DELETE FROM applied WHERE task_id = ?", (task_id,)),
+            ("DELETE FROM events WHERE task_id = ?", (task_id,)),
             ("UPDATE tasks SET state = 'inbox', updated_at = ? WHERE id = ?", (now_local(), task_id)),
         ])
         return self.task(task_id)
@@ -201,13 +220,64 @@ class Store:
             return self._rows("SELECT * FROM busy WHERE start < ? AND end > ? ORDER BY start", (end, start))
         return self._rows("SELECT * FROM busy ORDER BY start")
 
-    def replace_busy(self, source: str, events: list[dict]) -> int:
+    def replace_busy(self, source: str, events: list[dict], window: tuple[str, str] | None = None,
+                     seen: dict[str, tuple[str, str]] | None = None) -> int:
+        """Replace one source's busy time. With a ``window`` the source is a calendar read just now
+        over that window, and must be read again before later plans and applies; without one it is
+        busy time that stays until replaced. ``seen`` maps the planner's own event ids found in the
+        read to the times the calendar shows for them."""
+        # System clock like proposals' created_at, to the microsecond so "read after the plan" is exact.
+        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
         statements: list[tuple[str, Iterable[Any]]] = [("DELETE FROM busy WHERE source = ?", (source,))]
         for index, event in enumerate(events):
             statements.append(("INSERT INTO busy(id, source, title, start, end) VALUES (?,?,?,?,?)",
                                (f"{source}:{index}", source, event["title"], event["start"], event["end"])))
+        if window is None:
+            statements.append(("DELETE FROM calendars WHERE source = ?", (source,)))
+        else:
+            statements.append(("INSERT INTO calendars(source, read_at, window_start, window_end) VALUES (?,?,?,?) "
+                               "ON CONFLICT(source) DO UPDATE SET read_at = excluded.read_at, "
+                               "window_start = excluded.window_start, window_end = excluded.window_end",
+                               (source, stamp, *window)))
+            # The calendar is the truth for the planner's own events: one moved there moves its
+            # task's block here; one no longer there is no longer seen in this calendar.
+            statements.append(("UPDATE events SET seen_in = NULL, seen_at = NULL WHERE seen_in = ? "
+                               "AND start < ? AND end > ?", (source, window[1], window[0])))
+            for event, (start, end) in (seen or {}).items():
+                statements.append(("UPDATE events SET seen_in = ?, seen_at = ?, start = ?, end = ? WHERE event_id = ?",
+                                   (source, stamp, start, end, event)))
+                statements.append(("UPDATE applied SET start = ?, end = ? WHERE task_id = "
+                                   "(SELECT task_id FROM events WHERE event_id = ?)", (start, end, event)))
         self._write(statements)
         return len(events)
+
+    def forget_source(self, source: str) -> bool:
+        known = source in self.busy_sources() or any(c["source"] == source for c in self.calendars())
+        self._write([("DELETE FROM busy WHERE source = ?", (source,)),
+                     ("DELETE FROM calendars WHERE source = ?", (source,)),
+                     ("UPDATE events SET seen_in = NULL, seen_at = NULL WHERE seen_in = ?", (source,))])
+        return known
+
+    def calendars(self) -> list[dict]:
+        """Calendar sources: read by the agent, and required fresh before plans and applies."""
+        return self._rows("SELECT * FROM calendars ORDER BY source")
+
+    # -- the planner's events on the user's calendar --------------------------
+
+    def events(self, task_id: str | None = None) -> list[dict]:
+        sql = "SELECT e.*, t.title FROM events e JOIN tasks t ON t.id = e.task_id"
+        if task_id:
+            return self._rows(sql + " WHERE e.task_id = ? ORDER BY e.start", (task_id,))
+        return self._rows(sql + " ORDER BY e.start")
+
+    def mark_handed_out(self, event_ids: list[str]) -> None:
+        """Record that these events were given to the agent to create, so asking for them again
+        first needs a calendar read showing which ones arrived."""
+        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+        self._write(("UPDATE events SET handed_at = ? WHERE event_id = ?", (stamp, e)) for e in event_ids)
+
+    def known_event_ids(self) -> set[str]:
+        return {row["event_id"] for row in self._rows("SELECT event_id FROM events")}
 
     def busy_sources(self) -> dict[str, int]:
         return {row["source"]: row["n"] for row in
@@ -228,7 +298,10 @@ class Store:
         return {
             "inbox_tasks": _digest([{k: t[k] for k in ("id", *TASK_FIELDS)} for t in self.tasks("inbox")]),
             "dependencies": _digest(sorted(self.dependencies())),
-            "busy_time": _digest([(b["source"], b["start"], b["end"]) for b in self.busy()]),
+            # Calendars are read again before an apply and checked for overlaps with the plan, so
+            # an unrelated new meeting does not invalidate it; other busy time is checked here.
+            "busy_time": _digest([(b["source"], b["start"], b["end"]) for b in self.busy()
+                                  if b["source"] not in {c["source"] for c in self.calendars()}]),
             "applied_blocks": _digest([(a["task_id"], a["start"], a["end"]) for a in self.applied()]),
             "settings": _digest(self.settings()),
         }
@@ -236,9 +309,9 @@ class Store:
     def save_proposal(self, body: dict, parts: dict[str, str]) -> str:
         proposal_id = str(uuid.uuid4())
         self._write([(
-            "INSERT INTO proposals(id, created_at, fingerprint, parts, score, body) VALUES (?,?,?,?,?,?)",
-            (proposal_id, now_local(), _digest(parts), json.dumps(parts), body.get("score", ""),
-             json.dumps(body)),
+            "INSERT INTO proposals(id, created_at, made_at, fingerprint, parts, score, body) VALUES (?,?,?,?,?,?,?)",
+            (proposal_id, now_local(), datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f"), _digest(parts),
+             json.dumps(parts), body.get("score", ""), json.dumps(body)),
         )])
         return proposal_id
 
@@ -269,7 +342,8 @@ class Store:
             reasons.append("starts_in_the_past")
         return reasons
 
-    def apply(self, proposal: dict) -> list[dict]:
+    def apply(self, proposal: dict, event_ids: dict[str, str]) -> list[dict]:
+        """Pin the proposal's blocks; ``event_ids`` maps each task to its block's fixed event id."""
         stamp = now_local()
         scheduled = [item for item in proposal["body"]["items"] if item["scheduled"]]
         statements: list[tuple[str, Iterable[Any]]] = []
@@ -279,6 +353,8 @@ class Store:
                                (item["task_id"], item["start_at"], item["end_at"], proposal["id"], stamp)))
             statements.append(("UPDATE tasks SET state = 'applied', updated_at = ? WHERE id = ?",
                                (stamp, item["task_id"])))
+            statements.append(("INSERT OR IGNORE INTO events(event_id, task_id, start, end) VALUES (?,?,?,?)",
+                               (event_ids[item["task_id"]], item["task_id"], item["start_at"], item["end_at"])))
         statements.append(("UPDATE proposals SET applied_at = ? WHERE id = ?", (stamp, proposal["id"])))
         self._write(statements)
         return scheduled

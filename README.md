@@ -31,6 +31,9 @@ no account. Then start Hermes and ask:
 Hermes asks for anything it is missing, solves, and shows you the plan. Say "apply" and it goes on
 your calendar.
 
+To plan around your real calendar and have plans land in it, give Hermes a calendar tool:
+[Google Calendar or Microsoft 365](#your-calendar). The planner itself holds no calendar login.
+
 If you already use Hermes, run `hermes chat -q hi` once after installing, then ask. Current Hermes
 builds a session's tool list from the plugins it saw at the previous launch, so the session right
 after an install has no planner tools.
@@ -52,9 +55,8 @@ a button there.
 | "I'm out Thursday", "the review takes 2 hours" | Updates what it knows and solves again |
 | "apply" | Puts the plan on your calendar, after you approve it |
 
-Busy time comes from wherever your calendar already lives. If Hermes can read it (for example with the
-bundled Google Workspace skill), it passes your events to the planner. You can also give it an
-iCalendar link or file, or list your meetings in the chat.
+Busy time comes from [your calendar](#your-calendar), which Hermes reads before every plan. You
+can also hand it an iCalendar file or link, or tell it when you're away.
 
 ## What you get
 
@@ -69,12 +71,26 @@ one. Your Hermes approval setting decides whether you are asked: with approvals 
 unattended runs (scheduled jobs, `hermes chat -q`) are refused; with approvals off, Hermes doesn't
 ask.
 
-**Plans that can't go stale.** A plan remembers what it was solved from. If a task, your busy time
-or your settings change before you apply it, applying is refused and Hermes solves again.
+**Planned around what is already there.** Once Hermes has read a calendar for the planner, the
+planner refuses to plan on a read older than 15 minutes, or one that doesn't cover the whole
+planning window. Hermes can't skip the calendar, even by mistake. Recurring meetings count as each
+of their occurrences.
 
-**Your calendar, any calendar.** Applied blocks are written to an `.ics` file Hermes hands you, which
-Google Calendar, Apple Calendar, Outlook and others import. If Hermes has a tool for your calendar,
-it offers to add them there directly.
+**Plans that can't go stale.** A plan remembers what it was solved from. If a task or your settings
+change before you apply it, applying is refused and Hermes solves again. Applying also needs your
+calendar read again after the plan was made: a new meeting on top of a planned block stops the
+apply, a new meeting elsewhere doesn't.
+
+**On your calendar, never twice.** Every planned block has a fixed event id and a marker in its
+description. Hermes creates the events with your calendar tool, and the planner recognizes its own
+events in every later read of your calendar. Applying again, or retrying after a dropped
+connection, only hands out the events your calendar doesn't show yet. Until Hermes has read the
+calendar again, the planner won't hand out an event a second time. Your existing events are never
+changed. If you drag a planned event to another time in your calendar app, the planner moves its
+block too, and new plans go around where it now is.
+
+**Any calendar app.** Every apply also gives you an `.ics` file. Importing it again updates the same
+events instead of adding copies.
 
 **In the Desktop app:**
 
@@ -103,6 +119,23 @@ it offers to add them there directly.
 **Every morning**, if you like: `/blueprint solverforge-planner:morning` sets up a workday job that
 refreshes your busy time, solves the next days and sends you the proposal to approve.
 
+## Your calendar
+
+The planner reads and writes no calendar itself. Hermes does, with the calendar tool you already
+use, and the planner checks every read and decides what may be written.
+
+| Calendar | Tool for Hermes |
+| --- | --- |
+| Google Calendar | the bundled **google-workspace** skill: ask Hermes to set up Google Workspace, once |
+| Outlook / Microsoft 365 | the [`microsoft365`](https://github.com/fabiomotta0311/hermes-microsoft365-plugin) plugin |
+| anything else | hand Hermes an `.ics` export, or tell it your busy times; apply gives you an `.ics` to import |
+
+Then ask Hermes to plan. The first time, it asks which calendar planned blocks go to; a calendar of
+their own, such as "Planner", keeps them easy to show, hide or delete. For a Google calendar other
+than your main one, give Hermes its Calendar ID (Google Calendar settings → the calendar →
+*Integrate calendar*). If you don't use a calendar,
+nothing is required: the planner plans around what you tell it.
+
 ## Settings
 
 Working hours, focus windows, how far ahead to plan and how long to solve are planner settings:
@@ -127,8 +160,12 @@ tell Hermes and it changes them. Two plugin settings live under
 - **One program, once per solve.** The engine runs as `solverforge-planner solve`: the problem goes
   in as JSON on standard input, the plan comes out on standard output, and it is stopped at
   `solve_timeout`. It makes no network calls. Nothing else is executed.
-- **One network call you start.** Loading busy time from an iCalendar URL fetches that URL (up to
-  10 MB).
+- **Two Python libraries.** [icalendar](https://pypi.org/project/icalendar/) and
+  [recurring-ical-events](https://pypi.org/project/recurring-ical-events/) read `.ics` files, with
+  recurring events expanded. Hermes asks before installing them with the plugin.
+- **One network call you start.** Loading busy time from an iCalendar link you give Hermes fetches
+  that link (up to 10 MB). Your calendar is read and written by your calendar tool, under its own
+  login and its own disclosures, never by this plugin.
 - **One folder.** Everything is in `<hermes home>/plugin-data/solverforge-planner/`: the planner
   database, the engine and the exported `.ics` files. Removing the plugin keeps it, so a reinstall
   finds your tasks; delete the folder to erase them. No credentials are read or stored, and there is
@@ -139,6 +176,7 @@ Engine builds: Linux (x86_64, arm64), macOS (Apple silicon, Intel), Windows (x86
 ## How it works
 
 ```
+your calendar ◄─► your calendar tool ◄─► Hermes
 you ──► Hermes ──► planner_* tools ──► planner database ──► problem (JSON)
                      │                                          │
                      │                  solverforge-planner solve (Rust, SolverForge)
@@ -174,8 +212,12 @@ make dist-all     # cross-build every release binary on Linux with cargo-zigbuil
 make              # all targets
 ```
 
-The plugin tests drive the real engine through the real tool handlers. Only the network is faked,
-in the test that proves a wrong checksum is refused. Engine releases are tagged `engine-vX.Y.Z`; the
+The plugin tests drive the real engine through the real tool handlers. The calendar tests play the
+agent: they pass calendar reads and create events the way the Google Calendar and Microsoft Graph
+APIs do (one keeps the event id it is given, the other assigns its own), and check that no event is
+ever created twice, that stale reads are refused, and that existing events never change. A fixture
+covers recurrence exceptions, moved occurrences, Windows time zone names, and free and cancelled
+events. Only the engine download is faked. Engine releases are tagged `engine-vX.Y.Z`; the
 plugin pins their checksums before its own `vX.Y.Z` tag.
 
 ## License

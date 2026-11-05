@@ -87,7 +87,7 @@ def setup_week(planner):
     acc = call(planner, "planner_task_create", title="Call accountant", duration_minutes=30, priority="low",
                cognitive_load="low")["task"]
     assert call(planner, "planner_depend", action="add", before=deck["id"], after=pr["id"])["ok"]
-    assert call(planner, "planner_busy_set", source="work",
+    assert call(planner, "planner_busy_set", kind="other", source="work",
                 events=[{"title": "Offsite", "start": f"{d1} 09:00", "end": f"{d1} 18:00"},
                         {"title": "Standup", "start": f"{d2}T09:00:00+01:00", "end": f"{d2}T09:30:00+01:00"}])["ok"]
     return {"deck": deck, "pr": pr, "acc": acc, "days": (d1, d2, d3)}
@@ -179,23 +179,26 @@ def test_cycles_and_bad_input_are_refused(planner):
     assert call(planner, "planner_task_delete", id="nope")["code"] == "not_found"
 
 
-def test_ics_import_and_export_round_trip(planner, tmp_path):
+def test_ics_import_expands_recurring_events_and_export_round_trips(planner, tmp_path):
     setup_week(planner)
+    d1, d2 = next_weekday(1), next_weekday(2)
+    c = lambda d, hm: f"{d:%Y%m%d}T{hm}00"
     feed = tmp_path / "busy.ics"
     feed.write_text("\r\n".join([
-        "BEGIN:VCALENDAR", "BEGIN:VEVENT", "SUMMARY:Dentist", "DTSTART:20261111T130000Z",
-        "DTEND:20261111T150000Z", "END:VEVENT",
-        "BEGIN:VEVENT", "SUMMARY:Holiday", "DTSTART;VALUE=DATE:20261112", "DTEND;VALUE=DATE:20261113",
-        "END:VEVENT",
-        "BEGIN:VEVENT", "SUMMARY:Weekly", "DTSTART;TZID=Europe/Rome:20261110T100000",
-        "DTEND;TZID=Europe/Rome:20261110T110000", "RRULE:FREQ=WEEKLY", "END:VEVENT",
-        "BEGIN:VEVENT", "SUMMARY:Free", "TRANSP:TRANSPARENT", "DTSTART:20261111T080000Z",
-        "DTEND:20261111T090000Z", "END:VEVENT", "END:VCALENDAR"]))
+        "BEGIN:VCALENDAR", "VERSION:2.0",
+        "BEGIN:VEVENT", "UID:a@t", "SUMMARY:Dentist", f"DTSTART;TZID={TZ}:{c(d1, '1400')}",
+        f"DTEND;TZID={TZ}:{c(d1, '1600')}", "END:VEVENT",
+        "BEGIN:VEVENT", "UID:b@t", "SUMMARY:Holiday", f"DTSTART;VALUE=DATE:{d2:%Y%m%d}",
+        f"DTEND;VALUE=DATE:{d2 + timedelta(days=1):%Y%m%d}", "END:VEVENT",
+        "BEGIN:VEVENT", "UID:c@t", "SUMMARY:Daily", f"DTSTART;TZID={TZ}:{c(d1, '0900')}",
+        f"DTEND;TZID={TZ}:{c(d1, '0930')}", "RRULE:FREQ=DAILY;COUNT=2", "END:VEVENT",
+        "BEGIN:VEVENT", "UID:d@t", "SUMMARY:Free", "TRANSP:TRANSPARENT", f"DTSTART;TZID={TZ}:{c(d1, '1700')}",
+        f"DTEND;TZID={TZ}:{c(d1, '1800')}", "END:VEVENT", "END:VCALENDAR", ""]))
     result = call(planner, "planner_busy_from_ics", source="ics", path=str(feed))
-    assert result["stored"] == 2 and result["skipped_recurring"] == 1
-    busy = {b["title"]: b for b in planner.store.busy() if b["source"] == "ics"}
-    assert busy["Dentist"]["start"] == "2026-11-11 14:00:00"  # UTC -> Rome
-    assert busy["Holiday"]["end"] == "2026-11-13 00:00:00"
+    assert result["ok"] and result["stored"] == 4, result  # dentist, holiday, two daily occurrences
+    busy = sorted((b["start"], b["title"]) for b in planner.store.busy() if b["source"] == "ics")
+    assert [t for _, t in busy].count("Daily") == 2 and "Free" not in [t for _, t in busy]
+    assert (f"{d1} 14:00:00", "Dentist") in busy and (f"{d2} 00:00:00", "Holiday") in busy
 
     text = ics.calendar([{"task_id": "t1", "title": "Deck, v2", "start": "2026-11-11 09:00:00",
                           "end": "2026-11-11 10:00:00"}], TZ)

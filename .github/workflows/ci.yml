@@ -25,4 +25,4 @@ jobs:
       - name: Plugin tests against the engine just built
         env:
           SOLVERFORGE_PLANNER_BIN: ${{ github.workspace }}/engine/target/release/solverforge-planner
-        run: uv run --no-project --python 3.12 --with pytest python -m pytest -q
+        run: make test-plugin

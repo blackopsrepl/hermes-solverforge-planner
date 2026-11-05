@@ -42,6 +42,18 @@ let rest = () => Promise.reject(new Error('SolverForge Planner not loaded'))
 const text = (color, size = '0.75rem') => ({ color: `var(${color})`, fontSize: size })
 const qk = (...parts) => [ID, ...parts]
 
+// Only the agent has a calendar tool. When a plan or an apply needs the user's calendars
+// read, or planned events created there, the request goes to the chat instead.
+const NEEDS_AGENT = new Set(['calendar_stale'])
+
+function askHermes(prompt) {
+  const sent = host.composer?.submit?.(null, prompt)
+  if (!sent) {
+    host.notify({ kind: 'info', message: `Planner: ask Hermes in a chat: “${prompt}”` })
+  }
+  return sent
+}
+
 function useProposal(id) {
   return useQuery({
     queryKey: qk('proposal', id || 'latest'),
@@ -64,10 +76,14 @@ function useApply() {
 
   return useMutation({
     mutationFn: id => rest('/apply', { method: 'POST', body: { id } }),
-    onSuccess: result => {
+    onSuccess: (result, id) => {
       client.invalidateQueries({ queryKey: [ID] })
-      if (result?.ok) {
-        host.notify({ kind: 'success', message: `Planner: ${result.written.length} block(s) on the calendar` })
+      if (result?.ok && result.create_on_calendar?.length) {
+        askHermes(`Put the applied planner proposal ${id} on my calendar`)
+      } else if (result?.ok) {
+        host.notify({ kind: 'success', message: `Planner: ${result.written.length} block(s) applied` })
+      } else if (NEEDS_AGENT.has(result?.code)) {
+        askHermes(`Read my calendars and apply planner proposal ${id}`)
       } else {
         host.notify({ kind: 'error', message: `Planner: ${result?.error || 'apply refused'}` })
       }
@@ -218,8 +234,16 @@ function ApplyButton({ plan }) {
       jsx(ConfirmDialog, {
         open,
         onClose: () => setOpen(false),
-        title: `Put ${plan.scheduled.length} block(s) on your calendar?`,
-        description: plan.scheduled.map(b => `${b.day} ${hhmm(b.start)}–${hhmm(b.end)}  ${b.title}`).join('\n'),
+        title: plan.publish_to
+          ? `Add ${plan.scheduled.length} event(s) to your “${plan.publish_to}” calendar?`
+          : `Apply ${plan.scheduled.length} block(s)?`,
+        description: [
+          ...plan.scheduled.map(b => `${b.day} ${hhmm(b.start)}–${hhmm(b.end)}  ${b.title}`),
+          '',
+          plan.calendars?.length
+            ? 'Hermes reads your calendars again first, then adds the events. Existing events are not changed.'
+            : 'Existing events are not changed.'
+        ].join('\n'),
         confirmLabel: 'Apply',
         busyLabel: 'Applying…',
         onConfirm: () => apply.mutateAsync(plan.proposal_id)
@@ -357,7 +381,9 @@ function PlannerPage() {
     mutationFn: () => rest('/optimize', { method: 'POST', body: {}, timeoutMs: 180_000 }),
     onSuccess: result => {
       client.invalidateQueries({ queryKey: [ID] })
-      if (!result?.ok) {
+      if (NEEDS_AGENT.has(result?.code)) {
+        askHermes('Read my calendars and plan my planner inbox')
+      } else if (!result?.ok) {
         host.notify({ kind: 'error', message: `Planner: ${result?.error}` })
       }
     }
@@ -438,6 +464,7 @@ function PlannerPage() {
             ]
           }),
           jsx('span', { style: { flex: 1 } }),
+          jsx(CalendarsBadge, { status: status.data }),
           status.data?.timezone && jsx('span', { style: text('--ui-text-quaternary', '0.7rem'), children: status.data.timezone }),
           jsx(Button, {
             size: 'xs',
@@ -450,6 +477,33 @@ function PlannerPage() {
       }),
       body()
     ]
+  })
+}
+
+/** Which calendars plans go around, when each was read, and planned events not there yet. */
+function CalendarsBadge({ status }) {
+  if (!status?.ok) {
+    return null
+  }
+  const calendars = status.calendars || []
+  if (!calendars.length) {
+    return jsx(Tip, {
+      label: 'Plans only avoid busy time you tell Hermes about. Ask Hermes to read your calendar before planning.',
+      children: jsx(Badge, { variant: 'warn', children: 'No calendar read' })
+    })
+  }
+  const missing = status.not_on_calendar_yet || []
+  const lines = [
+    ...calendars.map(c => `${c.source}: read ${c.read_at.slice(5, 16)}`),
+    status.publish_to ? `Planned blocks go to “${status.publish_to}”.` : 'No calendar chosen for planned blocks yet.',
+    ...(missing.length ? [`${missing.length} planned event(s) not on the calendar yet.`] : [])
+  ]
+  return jsx(Tip, {
+    label: lines.join('\n'),
+    children: jsx(Badge, {
+      variant: missing.length ? 'warn' : 'muted',
+      children: `${calendars.length} calendar${calendars.length === 1 ? '' : 's'}${missing.length ? ` · ${missing.length} to add` : ''}`
+    })
   })
 }
 
@@ -513,6 +567,10 @@ export default {
           run: () =>
             rest('/optimize', { method: 'POST', body: {}, timeoutMs: 180_000 }).then(result => {
               refresh()
+              if (NEEDS_AGENT.has(result?.code)) {
+                askHermes('Read my calendars and plan my planner inbox')
+                return
+              }
               host.notify(
                 result?.ok
                   ? { kind: 'success', message: `Planner: proposal ${result.score}` }

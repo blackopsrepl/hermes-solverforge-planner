@@ -23,7 +23,9 @@ ENGINE_BIN     := engine/target/release/solverforge-planner
 TARGETS        := x86_64-unknown-linux-musl aarch64-unknown-linux-musl \
                   x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-gnu
 PYTHON         ?= 3.12
-PYTEST         := uv run --no-project --python $(PYTHON) --with pytest python -m pytest
+# The plugin's runtime libraries come from plugin.yaml, the same list Hermes installs.
+PLUGIN_DEPS    := $(shell sed -n '/^python_dependencies:/,/^[a-z_]*:/s/^  - "\(.*\)"$$/--with "\1"/p' plugin.yaml)
+PYTEST         := uv run --no-project --python $(PYTHON) --with pytest $(PLUGIN_DEPS) python -m pytest
 
 # ============== Phony Targets ==============
 .PHONY: banner help setup engine test test-engine test-plugin lint fmt fmt-check clippy \
