@@ -31,9 +31,9 @@ no account. Then start Hermes and ask:
 Hermes asks for anything it is missing, solves, and shows you the plan. Say "apply" and it goes on
 your calendar.
 
-If you already use Hermes, the planner's tools appear from the second session after installing:
-current Hermes builds a session's tool list from the plugins it saw at the previous launch. In that
-first session Hermes tells you to start a new one instead of guessing a schedule.
+If you already use Hermes, run `hermes chat -q hi` once after installing, then ask. Current Hermes
+builds a session's tool list from the plugins it saw at the previous launch, so the session right
+after an install has no planner tools.
 
 **In the Desktop app**, open **Capabilities → Plugins** and turn on SolverForge Planner's Desktop
 features. You get the plan card above, a **Planner** page in the sidebar, and the engine install as
