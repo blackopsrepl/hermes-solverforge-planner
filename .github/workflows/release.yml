@@ -23,6 +23,9 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Engine checks
         working-directory: engine
         run: |
@@ -32,7 +35,9 @@ jobs:
       - name: Plugin tests against the engine just built
         env:
           SOLVERFORGE_PLANNER_BIN: ${{ github.workspace }}/engine/target/release/solverforge-planner
-        run: uv run --no-project --python 3.12 --with pytest python -m pytest -q
+        run: make test-plugin
+      - name: Desktop render tests
+        run: make test-desktop
       - name: Tag matches the engine version
         run: |
           tag="${GITHUB_REF_NAME#engine-v}"
