@@ -40,27 +40,6 @@ def broadcast(what: str, detail: dict) -> None:
     broadcast_plugin_event(NAME, "changed", {"what": what, **detail})
 
 
-def refresh_hermes_toolset_cache() -> None:
-    """Make this plugin's tools available from the very next Hermes session.
-
-    Hermes builds each new session's tool list from the plugin toolsets it
-    saved at the previous launch, so a plugin installed since then has no
-    tools in the first session after install (hermes_cli/tools_config.py,
-    _get_plugin_toolset_keys). Setup runs with this plugin loaded, so saving
-    the list again here closes that gap. It uses Hermes's own writer, and does
-    nothing if a future Hermes no longer has it.
-    """
-    try:
-        from hermes_cli import plugins as hermes_plugins
-
-        persist = getattr(hermes_plugins, "_persist_plugin_toolset_keys", None)
-        if persist is not None:
-            hermes_plugins.discover_plugins()
-            persist()
-    except Exception:  # noqa: BLE001 - best effort; the next launch saves it anyway
-        pass
-
-
 def planner(get_config=None) -> Planner:
     """The planner for the profile being served. The dashboard backend shares it with the tools."""
     root = data_dir()

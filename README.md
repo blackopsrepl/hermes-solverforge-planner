@@ -31,6 +31,10 @@ no account. Then start Hermes and ask:
 Hermes asks for anything it is missing, solves, and shows you the plan. Say "apply" and it goes on
 your calendar.
 
+If you already use Hermes, the planner's tools appear from the second session after installing:
+current Hermes builds a session's tool list from the plugins it saw at the previous launch. In that
+first session Hermes tells you to start a new one instead of guessing a schedule.
+
 **In the Desktop app**, open **Capabilities → Plugins** and turn on SolverForge Planner's Desktop
 features. You get the plan card above, a **Planner** page in the sidebar, and the engine install as
 a button there.
@@ -129,9 +133,6 @@ tell Hermes and it changes them. Two plugin settings live under
   database, the engine and the exported `.ics` files. Removing the plugin keeps it, so a reinstall
   finds your tasks; delete the folder to erase them. No credentials are read or stored, and there is
   no telemetry.
-- **One Hermes file refreshed at setup.** The install step re-saves Hermes's list of plugin
-  toolsets (`<hermes home>/cache/plugin_toolset_keys.json`) through Hermes's own code, so the
-  planner's tools are available from the next session rather than the one after.
 
 Engine builds: Linux (x86_64, arm64), macOS (Apple silicon, Intel), Windows (x86_64).
 

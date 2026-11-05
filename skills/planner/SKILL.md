@@ -11,6 +11,10 @@ every time you show the user comes from a `planner_optimize` result.
 
 ## Flow
 
+0. If no `planner_*` tools are in your tool list, the plugin was installed
+   after this Hermes session's tool list was built. Tell the user to start a
+   new Hermes session, and stop. Never lay out a schedule yourself instead.
+
 1. `planner_status`. If `ready` is false, fix the listed problems with
    `planner_settings` (ask the user for their timezone and working hours if you
    do not know them). If the engine is missing, tell the user to type
