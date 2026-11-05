@@ -121,6 +121,26 @@ pub(super) fn build_plan(problem: &Problem) -> Result<BuiltPlan, PlannerError> {
         .filter(|block| block.high)
         .map(|block| block.end)
         .collect();
+    // In Planner123 an applied block is also an event on its target calendar,
+    // so it occupies time like any meeting. Here it has no calendar, so it
+    // joins the busy facts directly; otherwise new work could overlap it.
+    let mut busy = busy;
+    busy.extend(
+        problem
+            .applied
+            .iter()
+            .zip(&applied)
+            .enumerate()
+            .map(|(index, (block, fact))| SolverBusy {
+                id: format!("applied-busy:{index}:{}", block.task_id),
+                event_id: block.task_id.clone(),
+                event_title: "Planned work".into(),
+                calendar_id: "planner".into(),
+                recurring: false,
+                start: fact.start,
+                end: fact.end,
+            }),
+    );
 
     let availability = availability_facts(&settings.availability)?;
     let cognitive = cognitive_facts(problem)?;

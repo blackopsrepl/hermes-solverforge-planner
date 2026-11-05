@@ -116,6 +116,23 @@ fn applied_predecessor_orders_inbox_work() {
 }
 
 #[test]
+fn applied_blocks_occupy_their_time() {
+    let mut problem = week();
+    // Only Tue 9-10 is open; an applied block holds it, so nothing may land there.
+    problem["settings"]["availability"] = json!({"tue": [{"start": "09:00", "end": "10:00"}]});
+    problem["busy"] = json!([]);
+    problem["dependencies"] = json!([]);
+    problem["tasks"] = json!([{"id": "pr", "duration_minutes": 60}]);
+    problem["applied"] = json!([{"task_id": "deck", "start": "2026-11-10 09:00",
+        "end": "2026-11-10 10:00"}]);
+    let (ok, envelope) = solve(&problem);
+    assert!(ok, "{envelope}");
+    let it = item(&envelope["data"], "pr");
+    assert_eq!(it["scheduled"], false, "{it}");
+    assert_eq!(it["outcome"], "no_hard_feasible_slot");
+}
+
+#[test]
 fn bad_input_is_a_structured_error() {
     let mut problem = week();
     problem["timezone"] = json!("Mars/Olympus");
