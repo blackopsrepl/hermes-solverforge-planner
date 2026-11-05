@@ -1,0 +1,62 @@
+name: plugin release
+
+# Publishes the plugin's own release for a vX.Y.Z tag. The plugin installs from the
+# tag itself (`hermes plugins install blackopsrepl/hermes-solverforge-planner`);
+# this release is where people read what changed and which engine it pins. It is
+# only created when the checksums pinned in engine_bin.py match the SHA256SUMS of
+# the engine release they point to.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag matches the plugin version
+        id: version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          grep -q "^version: $version$" plugin.yaml
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "engine=$(sed -n 's/^ENGINE_VERSION = "\(.*\)"$/\1/p' engine_bin.py)" >> "$GITHUB_OUTPUT"
+      - name: Pinned checksums match the engine release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ENGINE: ${{ steps.version.outputs.engine }}
+        run: |
+          gh release download "engine-v$ENGINE" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS
+          python3 - <<'PY'
+          import ast, pathlib
+          tree = ast.parse(pathlib.Path("engine_bin.py").read_text())
+          pinned = next(ast.literal_eval(n.value) for n in tree.body
+                        if isinstance(n, ast.AnnAssign) and getattr(n.target, "id", "") == "CHECKSUMS")
+          published = {}
+          for line in pathlib.Path("SHA256SUMS").read_text().splitlines():
+              digest, name = line.split()
+              published[name.lstrip("*")] = digest
+          pinned_by_asset = {f"solverforge-planner-{t}{'.exe' if 'windows' in t else ''}": d for t, d in pinned.items()}
+          assert pinned_by_asset == published, f"pinned {pinned_by_asset} != released {published}"
+          print(f"{len(pinned)} pinned checksums match")
+          PY
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: SolverForge Planner ${{ steps.version.outputs.version }}
+          make_latest: "true"
+          body: |
+            ```sh
+            hermes plugins install blackopsrepl/hermes-solverforge-planner --enable
+            hermes solverforge-planner install
+            ```
+
+            The second command downloads [planning engine ${{ steps.version.outputs.engine }}](https://github.com/${{ github.repository }}/releases/tag/engine-v${{ steps.version.outputs.engine }})
+            for your platform and checks it against the SHA-256 pinned in this release.
+            See the [README](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/README.md) to get started.
+          generate_release_notes: true
