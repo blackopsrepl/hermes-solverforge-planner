@@ -169,6 +169,7 @@ def test_apply_needs_a_read_made_after_the_plan_and_refuses_new_overlaps(planner
     proposal = plan(planner, ("Write report", 60))
     refused = call(planner, "planner_apply", id=proposal["proposal_id"])
     assert refused["code"] == "calendar_stale" and "before this plan" in refused["error"]
+    assert refused["pull"] == ["google: work"], "Desktop names what to pull from this"
 
     block = proposal["scheduled"][0]
     start = datetime.strptime(block["start"], "%Y-%m-%d %H:%M:%S")

@@ -74,7 +74,7 @@ function useApply() {
           }`
         })
       } else {
-        host.notify({ kind: 'error', message: `Planner: ${result?.error || 'apply refused'}` })
+        host.notify({ kind: 'error', message: `Planner: ${plainError(result, 'apply refused')}` })
       }
     }
   })
@@ -341,15 +341,13 @@ function ApplyButton({ plan }) {
       jsx(ConfirmDialog, {
         open,
         onClose: () => setOpen(false),
-        title: plan.publish_to
-          ? `Add ${plan.scheduled.length} event(s) to your “${plan.publish_to}” calendar?`
-          : `Apply ${plan.scheduled.length} block(s)?`,
+        title: `Put ${plan.scheduled.length} block(s) on your plan?`,
         description: [
           ...plan.scheduled.map(b => `${b.day} ${hhmm(b.start)}–${hhmm(b.end)}  ${b.title}`),
           '',
-          plan.calendars?.length
-            ? 'Hermes reads your calendars again first, then adds the events. Existing events are not changed.'
-            : 'Existing events are not changed.'
+          plan.publish_to
+            ? `They go on the planner's calendar. To put them on ${plan.publish_to} too, ask Hermes to update it afterwards.`
+            : "They go on the planner's calendar."
         ].join('\n'),
         confirmLabel: 'Apply',
         busyLabel: 'Applying…',
@@ -486,6 +484,17 @@ function PlanCard({ attrs, streaming }) {
 }
 
 
+/** A refusal as the user should read it. The planner's own messages are written for the agent. */
+const plainError = (result, fallback) => {
+  if (result?.code === 'calendar_stale') {
+    const names = (result.pull || []).join(', ') || 'your calendar'
+    return `Your copy of ${names} is too old for this. Ask Hermes to pull it, then try again.`
+  }
+  if (result?.code === 'calendar_conflict') return 'Something new on your calendar overlaps this plan. Solve again.'
+  if (result?.code === 'stale') return 'Your tasks or settings changed since this plan. Solve again.'
+  return result?.error || fallback
+}
+
 const ageOf = stamp => {
   const minutes = Math.round((Date.now() - new Date(stamp.replace(' ', 'T')).getTime()) / 60_000)
   return minutes < 1 ? 'just now' : minutes < 60 ? `${minutes} min ago` : minutes < 1440 ? `${Math.round(minutes / 60)} h ago` : `${Math.round(minutes / 1440)} d ago`
@@ -536,7 +545,7 @@ function ReplanButton({ clashes }) {
       host.notify(
         result?.ok
           ? { kind: 'success', message: `Planner: new proposal ${result.score}; apply it to put the tasks back` }
-          : { kind: 'error', message: `Planner: ${result?.error || 're-plan failed'}` }
+          : { kind: 'error', message: `Planner: ${plainError(result, 're-plan failed')}` }
       )
     }
   })
@@ -702,7 +711,7 @@ function PlannerPage() {
     onSuccess: result => {
       client.invalidateQueries({ queryKey: [ID] })
       if (!result?.ok) {
-        host.notify({ kind: 'error', message: `Planner: ${result?.error}` })
+        host.notify({ kind: 'error', message: `Planner: ${plainError(result, 'solve failed')}` })
       }
     }
   })
@@ -855,7 +864,7 @@ export default {
               host.notify(
                 result?.ok
                   ? { kind: 'success', message: `Planner: proposal ${result.score}` }
-                  : { kind: 'error', message: `Planner: ${result?.error}` }
+                  : { kind: 'error', message: `Planner: ${plainError(result, 'solve failed')}` }
               )
               host.navigate(ROUTE)
             })

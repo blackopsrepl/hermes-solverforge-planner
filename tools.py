@@ -35,8 +35,8 @@ def _ok(**payload: Any) -> str:
     return json.dumps({"ok": True, **payload}, ensure_ascii=False)
 
 
-def _fail(code: str, message: str) -> str:
-    return json.dumps({"ok": False, "code": code, "error": message}, ensure_ascii=False)
+def _fail(code: str, message: str, **detail: Any) -> str:
+    return json.dumps({"ok": False, "code": code, "error": message, **detail}, ensure_ascii=False)
 
 
 class Planner:
@@ -86,25 +86,28 @@ class Planner:
         """Every calendar source read over ``window``, within FRESH_MINUTES, or after ``after``.
         Returns the sources; raises naming what to read again."""
         sources = self.store.calendars()
-        problems = []
+        problems, pull = [], []
         for cal in sources:
             read = datetime.strptime(cal["read_at"], READ_STAMP)
             if after is not None:
                 if read <= after:
                     problems.append(f"{cal['source']} ({why})")
+                    pull.append(cal["source"])
                     continue
             elif datetime.now() - read > timedelta(minutes=FRESH_MINUTES):
                 problems.append(f"{cal['source']} (read {cal['read_at'][:16]})")
+                pull.append(cal["source"])
                 continue
             if cal["window_start"] > window[0] or cal["window_end"] < window[1]:
                 problems.append(f"{cal['source']} (read {cal['window_start'][:10]}–{cal['window_end'][:10]}, "
                                 "not the whole window)")
+                pull.append(cal["source"])
         if problems:
             raise EngineError("calendar_stale", (
                 "read these calendars again with the user's calendar tool and pass them with "
                 f"planner_busy_set kind=calendar, window {window[0][:10]} to {window[1][:10]}: "
                 + "; ".join(problems) + ". If the user no longer uses one, planner_busy_set "
-                "remove=true for it."))
+                "remove=true for it."), pull=pull)
         return sources
 
     def _conflicts(self, items: list[dict]) -> list[str]:
@@ -139,7 +142,7 @@ class Planner:
             try:
                 return method(args or {})
             except EngineError as exc:
-                return _fail(exc.code, exc.message)
+                return _fail(exc.code, exc.message, **exc.detail)
             except (ValueError, TypeError, KeyError) as exc:
                 return _fail("invalid_arguments", str(exc))
 

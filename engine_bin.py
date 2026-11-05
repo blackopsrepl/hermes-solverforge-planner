@@ -40,10 +40,11 @@ MAX_BINARY_BYTES = 64 * 1024 * 1024
 class EngineError(Exception):
     """A refusal or failure from the engine, carrying its machine-readable code."""
 
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, **detail):
         super().__init__(f"{code}: {message}")
         self.code = code
         self.message = message
+        self.detail = detail  # structured facts for the Desktop half, e.g. which calendars to pull
 
 
 def target_triple() -> str | None:
