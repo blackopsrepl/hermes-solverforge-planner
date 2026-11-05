@@ -40,7 +40,7 @@ every time you show the user comes from a `planner_optimize` result.
      (such an event showed up again and its task is pinned there) and
      `moved_on_calendar`.
    - Once a calendar has been pulled, the planner refuses to plan on a pull
-     older than 15 minutes, and to apply on a pull from before the plan
+     older than 15 minutes, and to push on one older than that
      (`calendar_stale`): pull again; never work around it. A calendar the user
      stops using: `planner_busy_set` with `remove: true`.
    - Time the user mentions ("I'm out Thursday afternoon") goes to
@@ -66,7 +66,8 @@ every time you show the user comes from a `planner_optimize` result.
    a task: each one is a single block. If a task is longer than a focus
    window and the user wants it inside, offer to replace it with two tasks.
 5. Apply only when the user agrees: pull first if a calendar was pulled
-   before, then `planner_apply` with the proposal id. Hermes shows them an
+   before (apply checks the latest pull for new overlaps), then
+   `planner_apply` with the proposal id. Hermes shows them an
    approval prompt; that is expected. If it is refused with `stale` or
    `calendar_conflict` (something new is on the calendar where a block was
    going), run `planner_optimize` again and show the new proposal. Apply puts

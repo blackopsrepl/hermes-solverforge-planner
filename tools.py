@@ -627,11 +627,8 @@ class Planner:
         reasons = self.store.stale_reasons(proposal)
         if reasons:
             raise EngineError("stale", f"cannot apply: {', '.join(reasons)}; run planner_optimize again")
-        if items:
-            window = (min(i["start_at"] for i in items), max(i["end_at"] for i in items))
-            made = (datetime.strptime(proposal["made_at"], READ_STAMP) if proposal.get("made_at")
-                    else datetime.strptime(proposal["created_at"], STAMP) + timedelta(seconds=1))
-            self._require_fresh(window, after=made)
+        # Apply touches only the planner's own calendar, so it needs no new pull: it is checked against
+        # the latest one, and planner_push, which does reach the cloud, needs a fresh pull of its own.
         conflicts = self._conflicts(items)
         if conflicts:
             raise EngineError("calendar_conflict", "new on the calendar since this plan was made: "

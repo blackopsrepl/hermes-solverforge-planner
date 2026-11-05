@@ -80,10 +80,10 @@ planning window. Hermes can't skip the calendar, even by mistake. Recurring meet
 of their occurrences.
 
 **Plans that can't go stale.** A plan remembers what it was solved from. If a task or your settings
-change before you apply it, applying is refused and Hermes solves again. Applying also needs your
-calendar pulled again after the plan was made: a new meeting on top of a planned block stops the
-apply, a new meeting elsewhere doesn't. A meeting that lands on a block already on your plan is a
-clash: the Planner page marks it and offers **Re-plan**.
+change before you apply it, applying is refused and Hermes solves again. A meeting in the latest
+pull that overlaps a block stops the apply. A meeting that lands on a block already on your plan is
+a clash: the Planner page marks it and offers **Re-plan**, and nothing reaches your cloud calendar
+before a push, which needs a fresh pull.
 
 **On your calendar, never twice.** A push lists exactly which of the planner's events to add to your
 cloud calendar and which to remove; Hermes makes those changes with your calendar tool and pulls

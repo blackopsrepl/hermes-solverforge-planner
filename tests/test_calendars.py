@@ -163,13 +163,13 @@ def test_a_calendar_once_passed_must_be_read_fresh_and_whole_before_planning(pla
     assert call(planner, "planner_optimize")["ok"], "a calendar the user dropped is no longer required"
 
 
-def test_apply_needs_a_read_made_after_the_plan_and_refuses_new_overlaps(planner):
+def test_apply_is_checked_against_the_latest_pull_and_push_needs_a_fresh_one(planner):
     cal = Calendar()
     cal.read(planner)
     proposal = plan(planner, ("Write report", 60))
-    refused = call(planner, "planner_apply", id=proposal["proposal_id"])
-    assert refused["code"] == "calendar_stale" and "before this plan" in refused["error"]
-    assert refused["pull"] == ["google: work"], "Desktop names what to pull from this"
+    bump_reads(planner, 16)
+    stale = call(planner, "planner_optimize")
+    assert stale["code"] == "calendar_stale" and stale["pull"] == ["google: work"], "Desktop names what to pull"
 
     block = proposal["scheduled"][0]
     start = datetime.strptime(block["start"], "%Y-%m-%d %H:%M:%S")
@@ -182,7 +182,10 @@ def test_apply_needs_a_read_made_after_the_plan_and_refuses_new_overlaps(planner
     far = weekday(8)
     cal.add("Unrelated", f"{far}T15:00:00", f"{far}T16:00:00")
     cal.read(planner)
-    assert call(planner, "planner_apply", id=proposal["proposal_id"])["ok"]
+    bump_reads(planner, 16)
+    assert call(planner, "planner_apply", id=proposal["proposal_id"])["ok"], "apply is local: an old pull is enough"
+    refused = call(planner, "planner_push")
+    assert refused["code"] == "calendar_stale", "the cloud calendar is only written from a fresh pull"
 
 
 @pytest.mark.parametrize("style", ["google", "microsoft"])

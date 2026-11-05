@@ -145,7 +145,7 @@ BUSY_SET = {
         "description (that is how the planner finds its own events). The planner adopts its own "
         "events moved there, sends tasks whose events were deleted there back to the inbox "
         "(removed_on_calendar), and confirms a push. Once a calendar has been pulled, "
-        "planner_optimize needs it pulled within 15 minutes and planner_apply after the plan. "
+        "planner_optimize and planner_push need it pulled within 15 minutes. "
         "kind=other: time the user tells you about ('I'm out Thursday afternoon'), kept until "
         "replaced. Each call replaces that source; remove=true drops it."
     ),
@@ -236,9 +236,8 @@ PROPOSAL = {
 APPLY = {
     "name": "planner_apply",
     "description": (
-        "Pin a proposal's blocks on the planner's own calendar after the user approves. Needs every "
-        "pulled calendar pulled again after the plan was made (calendar_stale otherwise), and is "
-        "refused if anything there now overlaps a block, or if tasks or settings changed. Nothing "
+        "Pin a proposal's blocks on the planner's own calendar after the user approves. Refused if "
+        "anything in the latest pull of a calendar overlaps a block, or if tasks or settings changed. Nothing "
         "leaves this computer: planner_push then puts the blocks on the user's cloud calendar. "
         "Returns an .ics file too."
     ),
