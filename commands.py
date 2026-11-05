@@ -63,6 +63,9 @@ def slash_handler(planner, raw: str) -> str:
                 return result["error"]
             lines = [f"Applied {len(result['written'])} block(s):"]
             lines += [f"  {b['start'][5:16]}-{b['end'][11:16]}  {b['title']}" for b in result["written"]]
+            if result.get("create_on_calendar"):
+                lines.append(f"{len(result['create_on_calendar'])} event(s) still to add to your calendar: "
+                             "ask Hermes to put the applied plan on your calendar.")
             lines.append(f"Calendar file: {result['ics']}")
             return "\n".join(lines)
     except EngineError as exc:

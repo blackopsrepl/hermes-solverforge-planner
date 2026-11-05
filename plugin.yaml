@@ -29,6 +29,9 @@ provides_tools:
   - planner_apply
 provides_hooks:
   - pre_tool_call
+python_dependencies:
+  - "icalendar>=6.1,<8"
+  - "recurring-ical-events>=3.4,<4"
 config_schema:
   binary:
     type: str

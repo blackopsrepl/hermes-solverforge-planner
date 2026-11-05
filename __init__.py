@@ -96,13 +96,15 @@ def register(ctx) -> None:
     ctx.register_automation_blueprint(
         "morning",
         title="Morning plan",
-        description="Each workday, refresh busy time, solve the coming days and send the proposal for approval.",
+        description="Each workday, read your calendars, solve the coming days and send the proposal for approval.",
         category="work",
         schedule_template="{minute} {hour} * * 1-5",
         prompt_template=(
             "Morning planning run. Load the solverforge-planner:planner skill. Call planner_status. "
-            "If a calendar tool or skill is available to you, read today's and the next {days} days' events "
-            "and pass them to planner_busy_set (source 'calendar'). Then call planner_optimize. Report the "
+            "Read every calendar listed under calendars in the status with the user's calendar tool, "
+            "from today 00:00 to the end of the day {days} days from now, and pass each to "
+            "planner_busy_set with kind 'calendar', that window and the same source name. Then call "
+            "planner_optimize with horizon_days {days}. Report the "
             "score, the scheduled blocks by day and every task that did not fit with its reason, and end with "
             "the proposal id so I can approve it. Do not call planner_apply in this run."
         ),
