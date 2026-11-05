@@ -177,7 +177,10 @@ function WeekGrid({ days, busy = [], applied = [], proposed = [], unread = new S
         jsxs(
           'div',
           {
-            style: { ...text(d === today ? '--ui-accent' : '--ui-text-secondary', '0.7rem'), fontWeight: 500 },
+            style: {
+              ...text(d === today ? '--ui-accent' : d < today ? '--ui-text-quaternary' : '--ui-text-secondary', '0.7rem'),
+              fontWeight: 500
+            },
             children: [
               dayLabel(d),
               unread.has(d) &&
@@ -208,6 +211,7 @@ function WeekGrid({ days, busy = [], applied = [], proposed = [], unread = new S
               position: 'relative',
               height,
               borderRadius: 4,
+              opacity: d < today ? 0.55 : 1,
               background: unread.has(d)
                 ? 'repeating-linear-gradient(135deg, color-mix(in srgb, var(--ui-stroke-tertiary) 30%, transparent) 0 6px, transparent 6px 12px)'
                 : 'color-mix(in srgb, var(--ui-stroke-tertiary) 25%, transparent)'
@@ -435,8 +439,10 @@ function WeekView({ status }) {
     .filter(d => !working.size || working.has(d.weekday) || events.some(e => dayKey(e.start) === d.key) ||
       proposed.some(b => dayKey(b.start) === d.key))
     .map(d => d.key)
+  // The planner reads and plans from today on: a past day is past, not unread.
+  const today = isoDay(new Date())
   const unread = new Set(
-    calendars.length ? days.filter(d => !calendars.some(c => c.window[0] <= d && d < c.window[1])) : []
+    calendars.length ? days.filter(d => d >= today && !calendars.some(c => c.window[0] <= d && d < c.window[1])) : []
   )
   const oldest = calendars.map(c => c.read_at).sort()[0]
   const sunday = week[6].key
