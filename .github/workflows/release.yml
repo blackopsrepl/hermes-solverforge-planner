@@ -1,4 +1,4 @@
-name: release
+name: engine release
 
 # Builds the engine for every supported platform from one Linux runner, attests
 # each binary's build provenance, and publishes them with SHA256SUMS on the
@@ -88,6 +88,9 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#engine-v}" >> "$GITHUB_OUTPUT"
       - name: Checksums
         working-directory: dist
         run: sha256sum solverforge-planner-* | tee SHA256SUMS
@@ -95,9 +98,10 @@ jobs:
         with:
           files: dist/*
           fail_on_unmatched_files: true
-          name: Engine ${{ github.ref_name }}
+          name: Planning engine ${{ steps.version.outputs.version }}
+          make_latest: "false"
           body: |
-            SolverForge Planner engine binaries for Linux (x86_64, arm64; static musl), macOS
+            The planning engine used by SolverForge Planner. Binaries for Linux (x86_64, arm64; static musl), macOS
             (Apple silicon, Intel) and Windows (x86_64), built from `engine/` at this tag.
 
             You do not need to download these by hand: `hermes solverforge-planner install`
