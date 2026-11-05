@@ -37,13 +37,15 @@ every time you show the user comes from a `planner_optimize` result.
    renders as a plan card with an Apply button, elsewhere it is plain text, so
    also give a short list: each block as day, time, title. Explain every
    `unscheduled` task using its `outcome` and `blockers`, and offer the fix
-   (more hours, a later deadline, a shorter task).
+   (more hours, a later deadline, a shorter task). The planner never splits
+   a task: each one is a single block. If a task is longer than a focus
+   window and the user wants it inside, offer to replace it with two tasks.
 5. Apply only when the user agrees: `planner_apply` with the proposal id.
    Hermes shows them an approval prompt; that is expected. If it is refused
    because tasks, busy time or settings changed, run `planner_optimize` again
    and show the new proposal.
 6. After applying, offer the returned `.ics` file by writing `MEDIA:<ics>` on
-   its own line; it imports into any calendar app. If you have a tool or skill
+   its own line, exactly that form, not the bare path; it imports into any calendar app. If you have a tool or skill
    for the user's calendar, offer to add the `written` blocks there too.
 
 ## Changing a plan
