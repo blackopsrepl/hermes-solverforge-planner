@@ -108,11 +108,16 @@ gives you an `.ics` file; importing it again updates the same events instead of 
   the copy is, every block already on your plan, and a pending proposal over them with **Apply**.
   Overlapping events sit side by side; a double-booking is marked amber, a meeting on a planned
   block red, with **Re-plan**. Days outside the last pull are marked, never shown as free, and the
-  page says how many changes wait to be pushed. A **Tasks** tab and **Solve now** sit beside it.
+  page says how many changes wait to be pushed. **Solve now** sits beside it.
   Pull and push are Hermes's, not buttons: the page can't reach your calendar tool, so it shows
   where things stand and leaves the asking to you;
+- a **Tasks** tab: what is waiting for a plan, with what shapes its placement (deadline, priority,
+  task order); what is on your calendar, day by day, with how old each pulled copy is; and blocks
+  that have ended, folded away;
 - a status-bar chip for a plan waiting for approval, or for your next planned block;
 - palette commands *Planner: open* and *Planner: solve now*.
+
+![The Tasks tab: two tasks waiting for a plan, and four blocks on the calendar by day](docs/screenshots/tasks-tab.png)
 
 **Apply** asks first, listing every block:
 
