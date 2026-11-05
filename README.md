@@ -1,5 +1,7 @@
 # SolverForge Planner for Hermes
 
+<p align="center"><img src="docs/assets/mascot.png" alt="The SolverForge dragon shaking hands with the Nous Girl" width="320"></p>
+
 **Tell Hermes what you need to get done. A constraint solver fits it into your week around your
 meetings and deadlines, and proves every hard rule holds before anything goes on your calendar.**
 
