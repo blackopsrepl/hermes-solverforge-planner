@@ -486,18 +486,33 @@ class Planner:
         return tool_name
 
 
-def tool_table(planner: Planner):
-    """Pair each schema with its handler, in schema order."""
+METHODS = {
+    "planner_status": "status", "planner_inbox": "inbox",
+    "planner_task_create": "task_create", "planner_task_update": "task_update",
+    "planner_task_delete": "task_delete", "planner_task_unschedule": "task_unschedule",
+    "planner_depend": "depend", "planner_settings": "settings_tool",
+    "planner_busy_set": "busy_set", "planner_busy_from_ics": "busy_from_ics",
+    "planner_week": "week", "planner_optimize": "optimize",
+    "planner_proposal": "proposal", "planner_apply": "apply",
+}
+
+
+def tool_table(resolve: "Planner | Callable[[], Planner]"):
+    """Pair each schema with its handler, in schema order.
+
+    ``resolve`` is a planner or a zero-argument function returning one; with a
+    function, the planner is looked up on every call, so a process serving
+    several Hermes profiles reaches the store of the profile being served.
+    """
     from . import schemas as s
 
-    methods = {
-        "planner_status": planner.status, "planner_inbox": planner.inbox,
-        "planner_task_create": planner.task_create, "planner_task_update": planner.task_update,
-        "planner_task_delete": planner.task_delete, "planner_task_unschedule": planner.task_unschedule,
-        "planner_depend": planner.depend, "planner_settings": planner.settings_tool,
-        "planner_busy_set": planner.busy_set, "planner_busy_from_ics": planner.busy_from_ics,
-        "planner_week": planner.week, "planner_optimize": planner.optimize,
-        "planner_proposal": planner.proposal, "planner_apply": planner.apply,
-    }
+    get = resolve if callable(resolve) and not isinstance(resolve, Planner) else (lambda: resolve)
     for schema in s.ALL:
-        yield schema, planner.handler(methods[schema["name"]])
+        method = METHODS[schema["name"]]
+
+        def call(args: dict | None = None, _method: str = method, **kw: Any) -> str:
+            planner = get()
+            return planner.handler(getattr(planner, _method))(args, **kw)
+
+        call.__name__ = method
+        yield schema, call

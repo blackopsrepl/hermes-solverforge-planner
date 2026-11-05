@@ -16,6 +16,7 @@ import {
   GlyphSpinner,
   host,
   PALETTE_AREA,
+  PanelEmpty,
   queryClient,
   ROUTES_AREA,
   SegmentedControl,
@@ -365,15 +366,11 @@ function PlannerPage() {
       return jsx(EmptyState, { title: 'Planner unavailable', description: status.data.error })
     }
     if (status.data && !status.data.engine?.path) {
-      return jsxs('div', {
-        style: { display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-start' },
-        children: [
-          jsx(EmptyState, {
-            title: 'Install the SolverForge engine',
-            description: 'One download from this plugin’s GitHub release, checked against a pinned SHA-256.'
-          }),
-          jsx(InstallButton, {})
-        ]
+      return jsx(PanelEmpty, {
+        icon: 'cloud-download',
+        title: 'Install the SolverForge engine',
+        description: 'One download from this plugin’s GitHub release, checked against a pinned SHA-256.',
+        action: jsx(InstallButton, {})
       })
     }
     if (status.data && !ready) {

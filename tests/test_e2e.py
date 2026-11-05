@@ -96,7 +96,7 @@ def setup_week(planner):
 def test_registration_matches_the_manifest(tmp_path, monkeypatch):
     # Outside Hermes there is no plugin_data_dir(); point the package at a temp dir.
     monkeypatch.setattr(pkg, "data_dir", lambda: tmp_path)
-    monkeypatch.setattr(pkg, "_planner", None)
+    monkeypatch.setattr(pkg, "_planners", {})
     ctx = Ctx()
     pkg.register(ctx)
     manifest = (ROOT / "plugin.yaml").read_text()
@@ -236,3 +236,17 @@ def test_slash_command_plans_and_applies(planner):
     assert "score 0hard" in shown and "Apply with: /planner apply" in shown
     proposal_id = shown.rsplit(" ", 1)[1]
     assert slash_handler(planner, f"apply {proposal_id}").startswith("Applied 3 block(s)")
+
+
+def test_each_profile_home_gets_its_own_planner(tmp_path, monkeypatch):
+    # The Desktop backend serves several profiles from one process, re-scoping
+    # the Hermes home per request; one profile must never see another's store.
+    home = {"dir": tmp_path / "a"}
+    monkeypatch.setattr(pkg, "data_dir", lambda: home["dir"])
+    monkeypatch.setattr(pkg, "_planners", {})
+    a = pkg.planner()
+    home["dir"] = tmp_path / "b"
+    b = pkg.planner()
+    assert a is not b and a.data_dir != b.data_dir
+    home["dir"] = tmp_path / "a"
+    assert pkg.planner() is a

@@ -22,7 +22,9 @@ TOOLSET = "solverforge-planner"
 GATED = {"planner_apply", "planner_task_unschedule"}
 
 _lock = threading.Lock()
-_planner: Planner | None = None
+# One planner per plugin data directory. The data directory follows the Hermes
+# home of the profile being served, which one process can switch per request.
+_planners: dict[Path, Planner] = {}
 
 
 def data_dir() -> Path:
@@ -39,24 +41,25 @@ def broadcast(what: str, detail: dict) -> None:
 
 
 def planner(get_config=None) -> Planner:
-    """The process-wide planner. The dashboard backend shares it with the tools."""
-    global _planner
+    """The planner for the profile being served. The dashboard backend shares it with the tools."""
+    root = data_dir()
     with _lock:
-        if _planner is None:
-            root = data_dir()
+        found = _planners.get(root)
+        if found is None:
             config = get_config or (lambda key, default=None: default)
-            _planner = Planner(
+            found = _planners[root] = Planner(
                 Store.at(root / "planner.db"),
                 lambda: Engine(root, override=str(config("binary", "") or ""),
                                timeout_s=int(config("solve_timeout", 120) or 120)),
                 root,
                 on_change=broadcast,
             )
-        return _planner
+        return found
 
 
 def register(ctx) -> None:
-    p = planner(ctx.get_config)
+    def p() -> Planner:
+        return planner(ctx.get_config)
 
     for schema, handler in tool_table(p):
         ctx.register_tool(name=schema["name"], toolset=TOOLSET, schema=schema, handler=handler, emoji="🗓")
@@ -69,7 +72,7 @@ def register(ctx) -> None:
         # silently cover a later, different write.
         return {
             "action": "approve",
-            "message": p.approval_text(tool_name, args),
+            "message": p().approval_text(tool_name, args),
             "rule_key": f"{tool_name}:{args.get('id', '')}",
         }
 
@@ -77,7 +80,7 @@ def register(ctx) -> None:
 
     ctx.register_command(
         "planner",
-        lambda raw="", **kw: slash_handler(p, raw),
+        lambda raw="", **kw: slash_handler(p(), raw),
         description="SolverForge Planner: status, install, inbox, plan, show [id], apply <id>",
         args_hint="[status|install|inbox|plan|show|apply]",
     )
@@ -85,7 +88,7 @@ def register(ctx) -> None:
         name=NAME,
         help="Install and check the SolverForge planning engine",
         setup_fn=cli_setup,
-        handler_fn=lambda args: cli_handler(p, args),
+        handler_fn=lambda args: cli_handler(p(), args),
     )
 
     ctx.register_skill("planner", Path(__file__).parent / "skills" / "planner" / "SKILL.md")
