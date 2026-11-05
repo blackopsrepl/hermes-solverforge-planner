@@ -84,8 +84,11 @@ class Calendar:
 
 
 def plan(p, *tasks):
+    # From tomorrow: a block placed in the current slot has started by the time it is applied,
+    # and applying a block that has started is rightly refused.
+    tomorrow = f"{date.today() + timedelta(days=1)} 00:00"
     for title, minutes in tasks:
-        assert call(p, "planner_task_create", title=title, duration_minutes=minutes)["ok"]
+        assert call(p, "planner_task_create", title=title, duration_minutes=minutes, earliest_at=tomorrow)["ok"]
     result = call(p, "planner_optimize")
     assert result["ok"], result
     return result
@@ -217,7 +220,9 @@ def test_an_event_moved_in_the_calendar_app_moves_its_block(planner):
     cal.read(planner)
     proposal = plan(planner, ("Write report", 60))
     cal.read(planner)
-    payload = call(planner, "planner_apply", id=proposal["proposal_id"])["create_on_calendar"]
+    applied = call(planner, "planner_apply", id=proposal["proposal_id"])
+    assert applied["ok"], applied
+    payload = applied["create_on_calendar"]
     cal.create(payload)
     far = weekday(6)
     cal.events[-1].update(start=f"{far}T16:00:00", end=f"{far}T17:00:00")  # the user drags it
@@ -234,7 +239,9 @@ def test_unschedule_hands_back_exactly_the_planners_event(planner):
     cal.read(planner)
     proposal = plan(planner, ("Write report", 60))
     cal.read(planner)
-    payload = call(planner, "planner_apply", id=proposal["proposal_id"])["create_on_calendar"]
+    applied = call(planner, "planner_apply", id=proposal["proposal_id"])
+    assert applied["ok"], applied
+    payload = applied["create_on_calendar"]
     cal.create(payload)
     cal.read(planner)
     task_id = payload and call(planner, "planner_inbox", state="applied")["tasks"][0]["id"]
@@ -250,6 +257,7 @@ def test_an_ics_import_of_the_planners_own_export_is_not_busy_time(planner, tmp_
     proposal = plan(planner, ("Write report", 60))
     cal.read(planner)
     applied = call(planner, "planner_apply", id=proposal["proposal_id"])
+    assert applied["ok"], applied
     text = Path(applied["ics"]).read_text()
     assert f"UID:{applied['create_on_calendar'][0]['event_id']}@solverforge-planner" in text
     exported = tmp_path / "back.ics"

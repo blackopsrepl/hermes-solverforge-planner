@@ -81,10 +81,12 @@ def setup_week(planner):
     assert call(planner, "planner_settings", action="update", timezone=TZ, availability=hours,
                 solve_seconds=2, horizon_days=10, focus_window="09:00-12:00")["ok"]
     d1, d2, d3 = next_weekday(1), next_weekday(2), next_weekday(3)
-    deck = call(planner, "planner_task_create", title="Q4 deck", duration_minutes=240, priority="high",
+    # From tomorrow: a block in the current slot would have started by the time the tests apply it.
+    tomorrow = f"{date.today() + timedelta(days=1)} 00:00"
+    deck = call(planner, "planner_task_create", earliest_at=tomorrow, title="Q4 deck", duration_minutes=240, priority="high",
                 cognitive_load="high", deadline_at=f"{d3} 18:00")["task"]
-    pr = call(planner, "planner_task_create", title="Review Anna's PR", duration_minutes=60)["task"]
-    acc = call(planner, "planner_task_create", title="Call accountant", duration_minutes=30, priority="low",
+    pr = call(planner, "planner_task_create", earliest_at=tomorrow, title="Review Anna's PR", duration_minutes=60)["task"]
+    acc = call(planner, "planner_task_create", earliest_at=tomorrow, title="Call accountant", duration_minutes=30, priority="low",
                cognitive_load="low")["task"]
     assert call(planner, "planner_depend", action="add", before=deck["id"], after=pr["id"])["ok"]
     assert call(planner, "planner_busy_set", kind="other", source="work",
