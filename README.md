@@ -97,7 +97,10 @@ events instead of adding copies.
 ![The Planner page: the latest proposal on a day grid, busy time muted, planned blocks highlighted](docs/screenshots/planner-page.png)
 
 - the plan card in the chat, with the score, your busy time, the proposed blocks and **Apply**;
-- a **Planner** page with the latest proposal, your tasks and **Solve now**;
+- a **Planner** page that opens on your week: your calendar from the last read (with when it was
+  read, and **Refresh** to have Hermes read it again), every block already on your plan, and a
+  pending proposal over them with **Apply**; days outside the last read are marked, never shown as
+  free. A **Tasks** tab and **Solve now** sit beside it;
 - a status-bar chip for a plan waiting for approval, or for your next planned block;
 - palette commands *Planner: open* and *Planner: solve now*.
 

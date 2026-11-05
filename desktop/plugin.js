@@ -2,7 +2,7 @@
  * SolverForge Planner — Desktop half.
  *
  * Surfaces: the ::planner{proposal="…"} plan card in the transcript, a Planner
- * page with its sidebar row, a status-bar chip, palette commands and live
+ * page (the week: calendar, applied blocks, a pending proposal) with its sidebar row, a status-bar chip, palette commands and live
  * refresh on plugin events. Every byte of data comes from this package's own
  * backend (dashboard/plugin_api.py) through ctx.rest; the only writes are Apply
  * and Install engine, each behind a confirmation the user answers.
@@ -97,51 +97,64 @@ const dayLabel = key =>
   new Date(`${key}T12:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', weekday: 'short' })
 const hhmm = stamp => stamp.slice(11, 16)
 
-/** Days covered by the blocks, in order, padded so a single day still reads as a day. */
+/** Days covered by the blocks, in order. */
 function daysOf(blocks) {
   return [...new Set(blocks.map(b => dayKey(b.start)))].sort()
 }
 
-/** A compact day-column grid: busy time muted, proposed blocks in the accent. */
-function WeekGrid({ blocks, busy, height = 240 }) {
-  const days = daysOf(blocks)
+const isoDay = d =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+const KINDS = {
+  busy: { suffix: ' (busy)', fill: '--ui-text-quaternary', mix: 18, edge: '--ui-stroke-secondary', ink: '--ui-text-tertiary', z: 1 },
+  applied: { suffix: ' (on your plan)', fill: '--ui-accent', mix: 12, edge: '--ui-accent', ink: '--ui-text-secondary', z: 2 },
+  proposed: { suffix: ' (proposed)', fill: '--ui-accent', mix: 26, edge: '--ui-accent', ink: '--ui-text-primary', z: 3, dashed: true }
+}
+
+/**
+ * A compact day-column grid: busy time muted, blocks already on the plan in a light accent,
+ * proposed blocks in the full accent with a dashed edge. Days in ``unread`` are outside every
+ * calendar read and are hatched, so an empty day never passes for a free one.
+ */
+function WeekGrid({ days, busy = [], applied = [], proposed = [], unread = new Set(), height = 240 }) {
   if (!days.length) {
     return null
   }
-  const all = [...blocks, ...busy.filter(b => days.includes(dayKey(b.start)) && !b.all_day)]
+  const all = [...busy, ...applied, ...proposed].filter(b => days.includes(dayKey(b.start)))
   const lo = Math.min(DAY_START * 60, ...all.map(b => minutes(b.start)))
   const hi = Math.max(DAY_END * 60, ...all.map(b => (dayKey(b.end) > dayKey(b.start) ? 1440 : minutes(b.end))))
   const span = Math.max(60, hi - lo)
-  const y = m => `${((m - lo) / span) * 100}%`
+  const y = m => `${((Math.max(lo, m) - lo) / span) * 100}%`
   // Blocks keep their true length so back-to-back blocks never overlap; a block
   // too short for a line of text drops its label and keeps it in the tooltip.
   const labelFits = (start, end) => ((end - start) / span) * height >= 13
 
   const place = (b, kind) => {
+    const k = KINDS[kind]
     const top = minutes(b.start)
     const bottom = dayKey(b.end) > dayKey(b.start) ? 1440 : minutes(b.end)
-    const planned = kind === 'plan'
+    const inset = kind === 'busy' ? 0 : 2
     return jsx(
       Tip,
       {
-        label: `${b.title}  ${hhmm(b.start)}–${hhmm(b.end)}${planned ? '' : ' (busy)'}`,
+        label: `${b.title}  ${hhmm(b.start)}–${hhmm(b.end)}${k.suffix}`,
         children: jsx('div', {
           style: {
             position: 'absolute',
-            left: planned ? 2 : 0,
-            right: planned ? 2 : 0,
+            left: inset,
+            right: inset,
             top: `calc(${y(top)} + 1px)`,
             height: `max(3px, calc(${y(bottom)} - ${y(top)} - 2px))`,
             borderRadius: 3,
             overflow: 'hidden',
             padding: '1px 4px',
-            background: planned
-              ? 'color-mix(in srgb, var(--ui-accent) 22%, transparent)'
-              : 'color-mix(in srgb, var(--ui-text-quaternary) 18%, transparent)',
-            borderLeft: `2px solid var(${planned ? '--ui-accent' : '--ui-stroke-secondary'})`,
-            ...text(planned ? '--ui-text-primary' : '--ui-text-tertiary', '0.65rem'),
+            background: `color-mix(in srgb, var(${k.fill}) ${k.mix}%, transparent)`,
+            borderLeft: `2px solid var(${k.edge})`,
+            outline: k.dashed ? '1px dashed var(--ui-accent)' : undefined,
+            outlineOffset: -1,
+            ...text(k.ink, '0.65rem'),
             lineHeight: 1.25,
-            zIndex: planned ? 2 : 1
+            zIndex: k.z
           },
           children: labelFits(top, bottom) ? `${hhmm(b.start)} ${b.title}` : null
         })
@@ -154,13 +167,25 @@ function WeekGrid({ blocks, busy, height = 240 }) {
   for (let h = Math.ceil(lo / 60); h * 60 <= hi; h += 2) {
     hours.push(h)
   }
+  const today = isoDay(new Date())
 
   return jsxs('div', {
     style: { display: 'grid', gridTemplateColumns: `2.25rem repeat(${days.length}, minmax(0, 1fr))`, gap: 4 },
     children: [
       jsx('div', {}),
       ...days.map(d =>
-        jsx('div', { style: { ...text('--ui-text-secondary', '0.7rem'), fontWeight: 500 }, children: dayLabel(d) }, `h-${d}`)
+        jsxs(
+          'div',
+          {
+            style: { ...text(d === today ? '--ui-accent' : '--ui-text-secondary', '0.7rem'), fontWeight: 500 },
+            children: [
+              dayLabel(d),
+              unread.has(d) &&
+                jsx('span', { style: { ...text('--ui-text-quaternary', '0.6rem'), fontWeight: 400 }, children: ' · not read' })
+            ]
+          },
+          `h-${d}`
+        )
       ),
       jsx('div', {
         style: { position: 'relative', height },
@@ -183,11 +208,14 @@ function WeekGrid({ blocks, busy, height = 240 }) {
               position: 'relative',
               height,
               borderRadius: 4,
-              background: 'color-mix(in srgb, var(--ui-stroke-tertiary) 25%, transparent)'
+              background: unread.has(d)
+                ? 'repeating-linear-gradient(135deg, color-mix(in srgb, var(--ui-stroke-tertiary) 30%, transparent) 0 6px, transparent 6px 12px)'
+                : 'color-mix(in srgb, var(--ui-stroke-tertiary) 25%, transparent)'
             },
             children: [
-              ...busy.filter(b => dayKey(b.start) === d && !b.all_day).map(b => place(b, 'busy')),
-              ...blocks.filter(b => dayKey(b.start) === d).map(b => place(b, 'plan'))
+              ...busy.filter(b => dayKey(b.start) === d).map(b => place(b, 'busy')),
+              ...applied.filter(b => dayKey(b.start) === d).map(b => place(b, 'applied')),
+              ...proposed.filter(b => dayKey(b.start) === d).map(b => place(b, 'proposed'))
             ]
           },
           `c-${d}`
@@ -317,6 +345,7 @@ function PlanView({ plan, compact }) {
   const days = daysOf(plan.scheduled)
   const busy = useWeek(days[0], days.length ? Math.max(1, (new Date(days.at(-1)) - new Date(days[0])) / 864e5 + 1) : 1)
   const busyEvents = (busy.data?.events || []).filter(e => e.kind === 'busy')
+  const appliedEvents = plan.applied_at ? [] : (busy.data?.events || []).filter(e => e.kind === 'planned')
 
   return jsxs('div', {
     style: { display: 'flex', flexDirection: 'column', gap: 8 },
@@ -335,7 +364,13 @@ function PlanView({ plan, compact }) {
         ]
       }),
       plan.scheduled.length
-        ? jsx(WeekGrid, { blocks: plan.scheduled, busy: busyEvents, height: compact ? 300 : 460 })
+        ? jsx(WeekGrid, {
+            days,
+            busy: busyEvents,
+            applied: plan.applied_at ? plan.scheduled : appliedEvents,
+            proposed: plan.applied_at ? [] : plan.scheduled,
+            height: compact ? 300 : 460
+          })
         : jsx('div', { style: text('--ui-text-tertiary'), children: 'Nothing scheduled.' }),
       jsx(Unscheduled, { plan })
     ]
@@ -371,10 +406,112 @@ function PlanCard({ attrs, streaming }) {
   return frame(jsx(PlanView, { plan: query.data, compact: true }))
 }
 
-function PlannerPage() {
-  const [tab, setTab] = useState('plan')
-  const client = useQueryClient()
+const WEEKDAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
+
+/**
+ * The user's week as the planner knows it: their calendar from the last read, every block already
+ * on their plan, and a pending proposal over them. The planner cannot read a calendar itself, so
+ * Refresh asks Hermes to; the read time says how old the picture is.
+ */
+function WeekView({ status }) {
+  const [offset, setOffset] = useState(0)
+  const monday = new Date()
+  monday.setHours(12, 0, 0, 0)
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7) + 7 * offset)
+  const week = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(monday)
+    d.setDate(d.getDate() + i)
+    return { key: isoDay(d), weekday: WEEKDAY_KEYS[d.getDay()] }
+  })
+  const data = useWeek(week[0].key, 7)
   const proposal = useProposal(null)
+  const pending = proposal.data?.ok && !proposal.data.applied_at ? proposal.data : null
+  const events = data.data?.events || []
+  const calendars = status?.calendars || []
+  const working = new Set(Object.keys(status?.availability || {}))
+  const proposed = pending ? pending.scheduled.filter(b => week.some(d => d.key === dayKey(b.start))) : []
+  // Weekend columns only when the user works then or something is on them.
+  const days = week
+    .filter(d => !working.size || working.has(d.weekday) || events.some(e => dayKey(e.start) === d.key) ||
+      proposed.some(b => dayKey(b.start) === d.key))
+    .map(d => d.key)
+  const unread = new Set(
+    calendars.length ? days.filter(d => !calendars.some(c => c.window[0] <= d && d < c.window[1])) : []
+  )
+  const oldest = calendars.map(c => c.read_at).sort()[0]
+  const sunday = week[6].key
+
+  return jsxs('div', {
+    style: { display: 'flex', flexDirection: 'column', gap: 8 },
+    children: [
+      jsxs('div', {
+        style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+        children: [
+          jsx(Button, { size: 'xs', variant: 'ghost', onClick: () => setOffset(offset - 1), children: '‹' }),
+          jsx(Button, { size: 'xs', variant: 'ghost', disabled: offset === 0, onClick: () => setOffset(0), children: 'This week' }),
+          jsx(Button, { size: 'xs', variant: 'ghost', onClick: () => setOffset(offset + 1), children: '›' }),
+          jsx('span', {
+            style: { ...text('--ui-text-secondary', '0.75rem'), fontWeight: 500 },
+            children: `${dayLabel(week[0].key)} – ${dayLabel(sunday)}`
+          }),
+          jsx('span', { style: { flex: 1 } }),
+          calendars.length
+            ? jsx('span', {
+                style: text('--ui-text-quaternary', '0.7rem'),
+                children: `Calendar read ${oldest.slice(8, 10)}/${oldest.slice(5, 7)} ${oldest.slice(11, 16)}`
+              })
+            : null,
+          calendars.length
+            ? jsx(Button, {
+                size: 'xs',
+                variant: 'outline',
+                onClick: () => askHermes('Read my calendars for the planner'),
+                children: 'Refresh'
+              })
+            : null
+        ]
+      }),
+      pending &&
+        jsxs('div', {
+          style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+          children: [
+            jsx('span', { style: { ...text('--ui-text-primary', '0.8rem'), fontWeight: 600 }, children: 'Proposal' }),
+            jsx(ScoreBadge, { plan: pending }),
+            jsx('span', {
+              style: text('--ui-text-tertiary', '0.7rem'),
+              children: `${pending.scheduled.length} placed${pending.unscheduled.length ? `, ${pending.unscheduled.length} not placed` : ''}${
+                proposed.length < pending.scheduled.length ? ` · ${pending.scheduled.length - proposed.length} in other weeks` : ''
+              }`
+            }),
+            jsx('span', { style: { flex: 1 } }),
+            jsx(ApplyButton, { plan: pending })
+          ]
+        }),
+      data.isLoading
+        ? jsx(GlyphSpinner, {})
+        : jsx(WeekGrid, {
+            days,
+            busy: events.filter(e => e.kind === 'busy'),
+            applied: events.filter(e => e.kind === 'planned'),
+            proposed,
+            unread,
+            height: 460
+          }),
+      pending && jsx(Unscheduled, { plan: pending }),
+      !events.length && !proposed.length && !data.isLoading &&
+        jsx('div', {
+          style: text('--ui-text-tertiary', '0.75rem'),
+          children: calendars.length
+            ? 'Nothing on this week.'
+            : 'No calendar read yet. Ask Hermes to read your calendar, or to plan something.'
+        })
+    ]
+  })
+}
+
+function PlannerPage() {
+  const [tab, setTab] = useState('week')
+  const client = useQueryClient()
   const status = useQuery({ queryKey: qk('status'), queryFn: () => rest('/status'), staleTime: 10_000 })
   const inbox = useQuery({ queryKey: qk('inbox'), queryFn: () => rest('/inbox?state=all'), staleTime: 5_000 })
   const solve = useMutation({
@@ -440,12 +577,7 @@ function PlannerPage() {
           })
         : jsx(EmptyState, { title: 'No tasks', description: 'Ask Hermes to plan something.' })
     }
-    if (proposal.isLoading) {
-      return jsx(GlyphSpinner, {})
-    }
-    return proposal.data?.ok
-      ? jsx(PlanView, { plan: proposal.data })
-      : jsx(EmptyState, { title: 'No proposal yet', description: 'Solve to create one.' })
+    return jsx(WeekView, { status: status.data })
   }
 
   return jsxs('div', {
@@ -459,7 +591,7 @@ function PlannerPage() {
             value: tab,
             onChange: setTab,
             options: [
-              { id: 'plan', label: 'Proposal' },
+              { id: 'week', label: 'Week' },
               { id: 'inbox', label: 'Tasks' }
             ]
           }),
