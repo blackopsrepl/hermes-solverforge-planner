@@ -29,10 +29,11 @@ no account. Then start Hermes and ask:
 > Call the accountant, 30 minutes, low priority. Monday 9–12 I'm at an offsite.
 
 Hermes asks for anything it is missing, solves, and shows you the plan. Say "apply" and it goes on
-your calendar.
+the planner's calendar; say "update my calendar" and it goes on yours.
 
-To plan around your real calendar and have plans land in it, give Hermes a calendar tool:
-[Google Calendar or Microsoft 365](#your-calendar). The planner itself holds no calendar login.
+The planner keeps its own calendar on your computer. Your cloud calendars are optional: Hermes
+pulls them in and pushes the plan out with the calendar tool you already use
+([Google Calendar or Microsoft 365](#your-calendar)). The planner itself holds no calendar login.
 
 If you already use Hermes, run `hermes chat -q hi` once after installing, then ask. Current Hermes
 builds a session's tool list from the plugins it saw at the previous launch, so the session right
@@ -53,9 +54,11 @@ a button there.
 | "not before Monday" | Earliest start |
 | "deep work 9 to 12" | Focus window: demanding work goes there first |
 | "I'm out Thursday", "the review takes 2 hours" | Updates what it knows and solves again |
-| "apply" | Puts the plan on your calendar, after you approve it |
+| "apply" | Puts the plan on the planner's calendar, after you approve it |
+| "pull my calendar" | Copies your cloud calendar in, as busy time |
+| "update my calendar" | Pushes the plan to your cloud calendar: adds, moves and removes only the planner's events |
 
-Busy time comes from [your calendar](#your-calendar), which Hermes reads before every plan. You
+Busy time comes from [your calendar](#your-calendar), which Hermes pulls before every plan. You
 can also hand it an iCalendar file or link, or tell it when you're away.
 
 ## What you get
@@ -65,42 +68,47 @@ hard rules, and the score reads `0hard` only when every one of them holds. After
 places as much as it can, most important first, keeps soft deadlines, then keeps demanding work in
 your focus window and gives you a break after it.
 
-**Nothing written without you.** Putting blocks on the calendar, or taking one off, goes through
+**Nothing written without you.** Putting blocks on the plan, or taking one off, goes through
 Hermes's approval prompt, which lists the exact blocks. Approving one plan never approves a later
 one. Your Hermes approval setting decides whether you are asked: with approvals on, writes in
 unattended runs (scheduled jobs, `hermes chat -q`) are refused; with approvals off, Hermes doesn't
 ask.
 
-**Planned around what is already there.** Once Hermes has read a calendar for the planner, the
-planner refuses to plan on a read older than 15 minutes, or one that doesn't cover the whole
+**Planned around what is already there.** Once Hermes has pulled a calendar for the planner, the
+planner refuses to plan on a pull older than 15 minutes, or one that doesn't cover the whole
 planning window. Hermes can't skip the calendar, even by mistake. Recurring meetings count as each
 of their occurrences.
 
 **Plans that can't go stale.** A plan remembers what it was solved from. If a task or your settings
 change before you apply it, applying is refused and Hermes solves again. Applying also needs your
-calendar read again after the plan was made: a new meeting on top of a planned block stops the
-apply, a new meeting elsewhere doesn't.
+calendar pulled again after the plan was made: a new meeting on top of a planned block stops the
+apply, a new meeting elsewhere doesn't. A meeting that lands on a block already on your plan is a
+clash: the Planner page marks it and offers **Re-plan**.
 
-**On your calendar, never twice.** Every planned block has a fixed event id and a marker in its
-description. Hermes creates the events with your calendar tool, and the planner recognizes its own
-events in every later read of your calendar. Applying again, or retrying after a dropped
-connection, only hands out the events your calendar doesn't show yet. Until Hermes has read the
-calendar again, the planner won't hand out an event a second time. Your existing events are never
-changed. If you drag a planned event to another time in your calendar app, the planner moves its
-block too, and new plans go around where it now is.
+**On your calendar, never twice.** A push lists exactly which of the planner's events to add to your
+cloud calendar and which to remove; Hermes makes those changes with your calendar tool and pulls
+again, and the planner confirms each one. Every block has a fixed event id and a marker in its
+description, so the planner recognizes its own events in every pull. Pushing twice, or after a
+dropped connection, never adds an event twice: until a pull shows what arrived, the planner hands
+nothing out again. Your own events are never changed. Drag a planned event in your calendar app
+and its block moves with it; delete one there and its task goes back to the inbox.
 
-**Any calendar app.** Every apply also gives you an `.ics` file. Importing it again updates the same
-events instead of adding copies.
+**Any calendar app.** The planner's calendar is also a file, `planner.ics` in the plugin folder,
+rewritten on every change, which calendar apps on your computer can subscribe to. Every apply also
+gives you an `.ics` file; importing it again updates the same events instead of adding copies.
 
 **In the Desktop app:**
 
 ![The Planner page: the latest proposal on a day grid, busy time muted, planned blocks highlighted](docs/screenshots/planner-page.png)
 
 - the plan card in the chat, with the score, your busy time, the proposed blocks and **Apply**;
-- a **Planner** page that opens on your week: your calendar from the last read (with when it was
-  read, and **Refresh** to have Hermes read it again), every block already on your plan, and a
-  pending proposal over them with **Apply**; days outside the last read are marked, never shown as
-  free. A **Tasks** tab and **Solve now** sit beside it;
+- a **Planner** page that opens on your week: every pulled calendar in its own colour, with how old
+  the copy is, every block already on your plan, and a pending proposal over them with **Apply**.
+  Overlapping events sit side by side; a double-booking is marked amber, a meeting on a planned
+  block red, with **Re-plan**. Days outside the last pull are marked, never shown as free, and the
+  page says how many changes wait to be pushed. A **Tasks** tab and **Solve now** sit beside it.
+  Pull and push are Hermes's, not buttons: the page can't reach your calendar tool, so it shows
+  where things stand and leaves the asking to you;
 - a status-bar chip for a plan waiting for approval, or for your next planned block;
 - palette commands *Planner: open* and *Planner: solve now*.
 
@@ -115,7 +123,7 @@ events instead of adding copies.
 /planner inbox         tasks not yet on the calendar
 /planner plan          solve now and show the proposal
 /planner show [id]     show a proposal (default: the latest)
-/planner apply <id>    put that proposal on the calendar
+/planner apply <id>    put that proposal on the planner's calendar
 /planner install       install the engine
 ```
 
@@ -124,20 +132,21 @@ refreshes your busy time, solves the next days and sends you the proposal to app
 
 ## Your calendar
 
-The planner reads and writes no calendar itself. Hermes does, with the calendar tool you already
-use, and the planner checks every read and decides what may be written.
+The planner reads and writes no cloud calendar itself. Hermes does, with the calendar tool you
+already use, and the planner checks every pull and works out every push.
 
 | Calendar | Tool for Hermes |
 | --- | --- |
 | Google Calendar | the bundled **google-workspace** skill: ask Hermes to set up Google Workspace, once |
 | Outlook / Microsoft 365 | the [`microsoft365`](https://github.com/fabiomotta0311/hermes-microsoft365-plugin) plugin |
-| anything else | hand Hermes an `.ics` export, or tell it your busy times; apply gives you an `.ics` to import |
+| anything else | hand Hermes an `.ics` export, or tell it your busy times; subscribe your calendar app to `planner.ics` |
 
-Then ask Hermes to plan. The first time, it asks which calendar planned blocks go to; a calendar of
-their own, such as "Planner", keeps them easy to show, hide or delete. For a Google calendar other
-than your main one, give Hermes its Calendar ID (Google Calendar settings → the calendar →
-*Integrate calendar*). If you don't use a calendar,
-nothing is required: the planner plans around what you tell it.
+Then ask Hermes to plan: it pulls your calendar first. After an apply, say "update my calendar" to
+push. Pushes go to the one calendar you have pulled, or to `publish_calendar` when you pull more
+than one; a calendar of its own, such as "Planner", keeps the blocks easy to show, hide or
+delete. For a Google calendar other than your main one, give Hermes its Calendar ID (Google
+Calendar settings → the calendar → *Integrate calendar*). If you don't use a cloud calendar,
+nothing is required: the planner plans on its own calendar, around what you tell it.
 
 ## Settings
 
@@ -170,7 +179,7 @@ tell Hermes and it changes them. Two plugin settings live under
   that link (up to 10 MB). Your calendar is read and written by your calendar tool, under its own
   login and its own disclosures, never by this plugin.
 - **One folder.** Everything is in `<hermes home>/plugin-data/solverforge-planner/`: the planner
-  database, the engine and the exported `.ics` files. Removing the plugin keeps it, so a reinstall
+  database, the engine, `planner.ics` and the exported `.ics` files. Removing the plugin keeps it, so a reinstall
   finds your tasks; delete the folder to erase them. No credentials are read or stored, and there is
   no telemetry.
 
@@ -179,12 +188,13 @@ Engine builds: Linux (x86_64, arm64), macOS (Apple silicon, Intel), Windows (x86
 ## How it works
 
 ```
-your calendar ◄─► your calendar tool ◄─► Hermes
+your cloud calendar ◄─ pull / push ─► your calendar tool ◄─► Hermes
 you ──► Hermes ──► planner_* tools ──► planner database ──► problem (JSON)
                      │                                          │
                      │                  solverforge-planner solve (Rust, SolverForge)
                      │                                          │
                      └─ approval prompt ──► apply ◄────── proposal (JSON)
+                                              └──► planner's calendar (database + planner.ics)
 Desktop ──► /api/plugins/solverforge-planner ──► same database and engine
 ```
 
@@ -216,9 +226,10 @@ make              # all targets
 ```
 
 The plugin tests drive the real engine through the real tool handlers. The calendar tests play the
-agent: they pass calendar reads and create events the way the Google Calendar and Microsoft Graph
+agent: they pull calendars and carry out pushes the way the Google Calendar and Microsoft Graph
 APIs do (one keeps the event id it is given, the other assigns its own), and check that no event is
-ever created twice, that stale reads are refused, and that existing events never change. A fixture
+ever created twice, even after a dropped connection, that stale pulls are refused, that moves and
+deletions made in the calendar app are adopted, and that existing events never change. A fixture
 covers recurrence exceptions, moved occurrences, Windows time zone names, and free and cancelled
 events. Only the engine download is faked. Engine releases are tagged `engine-vX.Y.Z`; the
 plugin pins their checksums before its own `vX.Y.Z` tag.

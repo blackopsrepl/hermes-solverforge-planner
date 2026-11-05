@@ -65,6 +65,22 @@ CREATE TABLE IF NOT EXISTS events (
     end TEXT NOT NULL,
     seen_in TEXT,
     seen_at TEXT,
+    handed_at TEXT,
+    cloud_id TEXT
+);
+CREATE TABLE IF NOT EXISTS released (
+    event_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    released_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS removals (
+    event_id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    start TEXT NOT NULL,
+    end TEXT NOT NULL,
+    calendar TEXT,
+    cloud_id TEXT,
+    removed_at TEXT NOT NULL,
     handed_at TEXT
 );
 CREATE TABLE IF NOT EXISTS proposals (
@@ -120,6 +136,9 @@ class Store:
             columns = {row[1] for row in self._conn.execute("PRAGMA table_info(proposals)")}
             if "made_at" not in columns:  # databases from 0.1.0
                 self._conn.execute("ALTER TABLE proposals ADD COLUMN made_at TEXT")
+            columns = {row[1] for row in self._conn.execute("PRAGMA table_info(events)")}
+            if "cloud_id" not in columns:  # databases from 0.2.0
+                self._conn.execute("ALTER TABLE events ADD COLUMN cloud_id TEXT")
             self._conn.commit()
 
     @classmethod
@@ -195,8 +214,14 @@ class Store:
         return exists
 
     def unschedule(self, task_id: str) -> dict | None:
+        """Take a task off the plan. Its events that reached (or may have reached) a calendar are kept
+        as removals, so the next push deletes them there; the others simply go."""
         self._write([
             ("DELETE FROM applied WHERE task_id = ?", (task_id,)),
+            ("INSERT OR REPLACE INTO removals(event_id, title, start, end, calendar, cloud_id, removed_at) "
+             "SELECT e.event_id, t.title, e.start, e.end, e.seen_in, e.cloud_id, ? FROM events e "
+             "JOIN tasks t ON t.id = e.task_id WHERE e.task_id = ? AND (e.seen_at IS NOT NULL OR e.handed_at IS NOT NULL)",
+             (datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f"), task_id)),
             ("DELETE FROM events WHERE task_id = ?", (task_id,)),
             ("UPDATE tasks SET state = 'inbox', updated_at = ? WHERE id = ?", (now_local(), task_id)),
         ])
@@ -243,9 +268,10 @@ class Store:
             # task's block here; one no longer there is no longer seen in this calendar.
             statements.append(("UPDATE events SET seen_in = NULL, seen_at = NULL WHERE seen_in = ? "
                                "AND start < ? AND end > ?", (source, window[1], window[0])))
-            for event, (start, end) in (seen or {}).items():
-                statements.append(("UPDATE events SET seen_in = ?, seen_at = ?, start = ?, end = ? WHERE event_id = ?",
-                                   (source, stamp, start, end, event)))
+            for event, (start, end, *cloud) in (seen or {}).items():
+                statements.append(("UPDATE events SET seen_in = ?, seen_at = ?, start = ?, end = ?, "
+                                   "cloud_id = COALESCE(?, cloud_id) WHERE event_id = ?",
+                                   (source, stamp, start, end, cloud[0] if cloud else None, event)))
                 statements.append(("UPDATE applied SET start = ?, end = ? WHERE task_id = "
                                    "(SELECT task_id FROM events WHERE event_id = ?)", (start, end, event)))
         self._write(statements)
@@ -277,7 +303,47 @@ class Store:
         self._write(("UPDATE events SET handed_at = ? WHERE event_id = ?", (stamp, e)) for e in event_ids)
 
     def known_event_ids(self) -> set[str]:
-        return {row["event_id"] for row in self._rows("SELECT event_id FROM events")}
+        """Every event id the planner made that may be on a calendar, live or being removed."""
+        return {row["event_id"] for row in self._rows(
+            "SELECT event_id FROM events UNION SELECT event_id FROM removals UNION SELECT event_id FROM released")}
+
+    def release(self, event_id: str, task_id: str) -> None:
+        """Remember an event that vanished from a pull: if it shows up again, it was moved, not deleted."""
+        self._write([("INSERT OR REPLACE INTO released(event_id, task_id, released_at) VALUES (?,?,?)",
+                      (event_id, task_id, now_local()))])
+
+    def released(self) -> dict[str, str]:
+        return {r["event_id"]: r["task_id"] for r in self._rows("SELECT event_id, task_id FROM released")}
+
+    def readopt(self, event_id: str, task_id: str, start: str, end: str, source: str, cloud_id: str | None) -> None:
+        """Pin a task back at a vanished event that a pull shows again, where the user moved it."""
+        stamp = now_local()
+        self._write([
+            ("INSERT OR REPLACE INTO applied(task_id, start, end, proposal_id, applied_at) VALUES (?,?,?,?,?)",
+             (task_id, start, end, "calendar", stamp)),
+            ("UPDATE tasks SET state = 'applied', updated_at = ? WHERE id = ?", (stamp, task_id)),
+            ("INSERT OR REPLACE INTO events(event_id, task_id, start, end, seen_in, seen_at, cloud_id) "
+             "VALUES (?,?,?,?,?,?,?)", (event_id, task_id, start, end, source,
+                                        datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f"), cloud_id)),
+            ("DELETE FROM released WHERE event_id = ?", (event_id,)),
+        ])
+
+    def forget_released(self, event_id: str) -> None:
+        self._write([("DELETE FROM released WHERE event_id = ?", (event_id,))])
+
+    def removals(self) -> list[dict]:
+        return self._rows("SELECT * FROM removals ORDER BY start")
+
+    def confirm_removed(self, event_ids: Iterable[str]) -> None:
+        self._write(("DELETE FROM removals WHERE event_id = ?", (e,)) for e in event_ids)
+
+    def mark_removal_handed(self, event_ids: list[str]) -> None:
+        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+        self._write(("UPDATE removals SET handed_at = ? WHERE event_id = ?", (stamp, e)) for e in event_ids)
+
+    def set_removal_seen(self, event_id: str, calendar: str, cloud_id: str | None) -> None:
+        self._write([("UPDATE removals SET calendar = ?, cloud_id = COALESCE(?, cloud_id) WHERE event_id = ?",
+                      (calendar, cloud_id, event_id))])
 
     def busy_sources(self) -> dict[str, int]:
         return {row["source"]: row["n"] for row in

@@ -1,6 +1,6 @@
 manifest_version: 2
 name: solverforge-planner
-version: 0.2.0
+version: 0.3.0
 label: SolverForge Planner
 description: >
   Constraint-solved planning for Hermes. A SolverForge engine places your
@@ -27,6 +27,7 @@ provides_tools:
   - planner_optimize
   - planner_proposal
   - planner_apply
+  - planner_push
 provides_hooks:
   - pre_tool_call
 python_dependencies:

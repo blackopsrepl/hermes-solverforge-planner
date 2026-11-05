@@ -104,7 +104,7 @@ def test_registration_matches_the_manifest(tmp_path, monkeypatch):
     manifest = (ROOT / "plugin.yaml").read_text()
     for name in ctx.tools:
         assert f"  - {name}\n" in manifest
-    assert len(ctx.tools) == 14 and set(ctx.hooks) == {"pre_tool_call"}
+    assert len(ctx.tools) == 15 and set(ctx.hooks) == {"pre_tool_call"}
     assert set(ctx.commands) == {"planner"} and set(ctx.cli) == {"solverforge-planner"}
     gate = ctx.hooks["pre_tool_call"]
     assert gate(tool_name="planner_inbox", args={}) is None
