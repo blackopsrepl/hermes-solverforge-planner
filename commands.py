@@ -16,6 +16,12 @@ USAGE = (
 )
 
 
+def _after_install() -> None:
+    from . import refresh_hermes_toolset_cache
+
+    refresh_hermes_toolset_cache()
+
+
 def render(summary: dict) -> str:
     lines = [f"Proposal {summary['proposal_id'][:8]}  score {summary['score']}"
              + ("" if summary["can_apply"] else f"  (cannot apply: {', '.join(summary['blocked_because'])})")]
@@ -42,6 +48,7 @@ def slash_handler(planner, raw: str) -> str:
             # Typing the command is the user's own decision to download the engine.
             messages: list[str] = []
             planner.engine.install(log=messages.append)
+            _after_install()
             return "\n".join(messages)
         if verb == "inbox":
             tasks = json.loads(planner.inbox({}))["tasks"]
@@ -81,6 +88,7 @@ def cli_handler(planner, args) -> int:
     if command == "install":
         try:
             planner.engine.install()
+            _after_install()
         except EngineError as exc:
             print(f"{exc.code}: {exc.message}")
             print(f"platform: {target_triple() or 'unsupported'}")

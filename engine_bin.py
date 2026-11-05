@@ -25,14 +25,14 @@ from typing import Any, Callable
 ENGINE_VERSION = "0.1.0"
 REPO = "blackopsrepl/hermes-solverforge-planner"
 RELEASE_URL = f"https://github.com/{REPO}/releases/download/engine-v{ENGINE_VERSION}"
-# Filled from the release's SHA256SUMS when the release is cut; an empty
-# entry means that platform has no published binary for this version.
+# SHA-256 of each engine-v{ENGINE_VERSION} release asset, copied from the
+# release's SHA256SUMS after verifying each binary's build attestation.
 CHECKSUMS: dict[str, str] = {
-    "x86_64-unknown-linux-musl": "",
-    "aarch64-unknown-linux-musl": "",
-    "x86_64-apple-darwin": "",
-    "aarch64-apple-darwin": "",
-    "x86_64-pc-windows-gnu": "",
+    "x86_64-unknown-linux-musl": "ca26c92d59a15bf2707d1cb848402181d0c8dae81fa6cfe7b1c344827510544f",
+    "aarch64-unknown-linux-musl": "b74db0edc5da79f0b59898b043b55a16ec904c3b12ab1aff40ccb96380fd2555",
+    "x86_64-apple-darwin": "f0bd8bd6fd92efc07c5b16c72fc69b21f5bac9ef349ebf307e6e877fd9ddc0b8",
+    "aarch64-apple-darwin": "e2dd1912f9190b83a026314fd5204facac1bdca28655e2758bb44360f76a3fea",
+    "x86_64-pc-windows-gnu": "01530c007eac953f4ef48bbca0d16adc15ae3b813d2287d8f0c9248235c91492",
 }
 MAX_BINARY_BYTES = 64 * 1024 * 1024
 

@@ -97,6 +97,9 @@ function WeekGrid({ blocks, busy, height = 240 }) {
   const hi = Math.max(DAY_END * 60, ...all.map(b => (dayKey(b.end) > dayKey(b.start) ? 1440 : minutes(b.end))))
   const span = Math.max(60, hi - lo)
   const y = m => `${((m - lo) / span) * 100}%`
+  // Blocks keep their true length so back-to-back blocks never overlap; a block
+  // too short for a line of text drops its label and keeps it in the tooltip.
+  const labelFits = (start, end) => ((end - start) / span) * height >= 13
 
   const place = (b, kind) => {
     const top = minutes(b.start)
@@ -112,7 +115,7 @@ function WeekGrid({ blocks, busy, height = 240 }) {
             left: planned ? 2 : 0,
             right: planned ? 2 : 0,
             top: `calc(${y(top)} + 1px)`,
-            height: `max(14px, calc(${y(bottom)} - ${y(top)} - 2px))`,
+            height: `max(3px, calc(${y(bottom)} - ${y(top)} - 2px))`,
             borderRadius: 3,
             overflow: 'hidden',
             padding: '1px 4px',
@@ -124,7 +127,7 @@ function WeekGrid({ blocks, busy, height = 240 }) {
             lineHeight: 1.25,
             zIndex: planned ? 2 : 1
           },
-          children: `${hhmm(b.start)} ${b.title}`
+          children: labelFits(top, bottom) ? `${hhmm(b.start)} ${b.title}` : null
         })
       },
       `${kind}-${b.start}-${b.title}`
@@ -308,7 +311,7 @@ function PlanView({ plan, compact }) {
         ]
       }),
       plan.scheduled.length
-        ? jsx(WeekGrid, { blocks: plan.scheduled, busy: busyEvents, height: compact ? 200 : 420 })
+        ? jsx(WeekGrid, { blocks: plan.scheduled, busy: busyEvents, height: compact ? 300 : 460 })
         : jsx('div', { style: text('--ui-text-tertiary'), children: 'Nothing scheduled.' }),
       jsx(Unscheduled, { plan })
     ]

@@ -103,6 +103,7 @@ def install() -> dict:
     log: list[str] = []
     try:
         planner.engine.install(log=log.append)
+        _package().refresh_hermes_toolset_cache()
     except Exception as exc:  # EngineError, network errors: report, never 500 the pane
         return {"ok": False, "error": str(exc), "log": log}
     planner.changed("engine")
