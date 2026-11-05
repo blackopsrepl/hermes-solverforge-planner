@@ -93,7 +93,10 @@ def setup_week(planner):
     return {"deck": deck, "pr": pr, "acc": acc, "days": (d1, d2, d3)}
 
 
-def test_registration_matches_the_manifest():
+def test_registration_matches_the_manifest(tmp_path, monkeypatch):
+    # Outside Hermes there is no plugin_data_dir(); point the package at a temp dir.
+    monkeypatch.setattr(pkg, "data_dir", lambda: tmp_path)
+    monkeypatch.setattr(pkg, "_planner", None)
     ctx = Ctx()
     pkg.register(ctx)
     manifest = (ROOT / "plugin.yaml").read_text()
