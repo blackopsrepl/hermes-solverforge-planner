@@ -1,0 +1,129 @@
+// The Desktop half rendered with React's server renderer, against plugin tool output shapes.
+import assert from 'node:assert/strict'
+import { cpSync, mkdirSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
+
+import { setFixture } from '@hermes/plugin-sdk'
+import { createElement as h } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+
+// plugin.js imports bare specifiers; a copy beside node_modules resolves them here.
+const here = dirname(fileURLToPath(import.meta.url))
+mkdirSync(join(here, '.build'), { recursive: true })
+cpSync(join(here, '../../desktop/plugin.js'), join(here, '.build/plugin.mjs'))
+const { default: plugin } = await import('./.build/plugin.mjs')
+
+const items = []
+plugin.register({ rest: async () => ({}), onEvent() {}, registerMany: xs => items.push(...xs), register: x => items.push(x) })
+const render = id => {
+  const item = items.find(i => i.id === id)
+  return renderToStaticMarkup(h(() => (item.render ? item.render() : item.data.render(item.props))))
+}
+const text = html => html.replace(/<[^>]+>/g, ' ').replace(/&#x27;/g, "'").replace(/\s+/g, ' ').trim()
+
+const day = n => {
+  const d = new Date()
+  d.setHours(12, 0, 0, 0)
+  d.setDate(d.getDate() + n)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+const monday = (() => {
+  const d = new Date()
+  d.setHours(12, 0, 0, 0)
+  return day(-((d.getDay() + 6) % 7))
+})()
+const weekdays = Object.fromEntries(['mon', 'tue', 'wed', 'thu', 'fri'].map(k => [k, [{ start: '09:00', end: '18:00' }]]))
+const status = calendars => ({
+  ok: true,
+  ready: true,
+  problems: [],
+  engine: { path: '/x/solverforge-planner' },
+  timezone: 'Europe/Rome',
+  availability: weekdays,
+  calendars,
+  publish_to: null,
+  not_on_calendar_yet: []
+})
+const proposal = (blocks, extra = {}) => ({
+  ok: true,
+  proposal_id: '808f1223-73c5-4a48-bade-076a05225e07',
+  score: '0hard/0medium/0soft',
+  hard_rules_kept: true,
+  can_apply: true,
+  blocked_because: [],
+  applied_at: null,
+  calendars: [],
+  scheduled: blocks.map(([d, s, e, title]) => ({ task_id: title, title, start: `${d} ${s}:00`, end: `${d} ${e}:00`, day: d })),
+  unscheduled: [],
+  ...extra
+})
+
+test('the page opens on the week: calendar, applied blocks and a pending proposal', () => {
+  setFixture({
+    status: status([{ source: 'google: work', read_at: `${day(0)} 14:40:39`, window: [day(0), day(3)] }]),
+    proposal: proposal([[day(0), '15:00', '16:00', 'Write report']]),
+    weeks: {
+      [monday]: {
+        ok: true,
+        events: [
+          { kind: 'busy', title: 'Standup', start: `${day(0)} 09:00:00`, end: `${day(0)} 09:30:00`, source: 'google: work' },
+          { kind: 'planned', title: 'Call accountant', start: `${day(0)} 11:00:00`, end: `${day(0)} 11:30:00`, task_id: 'a' }
+        ]
+      }
+    }
+  })
+  const html = render('page')
+  const shown = text(html)
+  assert.match(html, /data-on="true">Week</)
+  assert.match(shown, /This week/)
+  assert.match(shown, new RegExp(`Calendar read ${day(0).slice(8, 10)}/${day(0).slice(5, 7)} 14:40 Refresh`))
+  assert.match(html, /Standup {2}09:00–09:30 \(busy\)/)
+  assert.match(html, /Call accountant {2}11:00–11:30 \(on your plan\)/)
+  assert.match(html, /Write report {2}15:00–16:00 \(proposed\)/)
+  assert.match(shown, /Proposal 0hard\/0medium\/0soft 1 placed/)
+})
+
+test('days after the last read are marked unread; past days are not', () => {
+  setFixture({
+    status: status([{ source: 'google: work', read_at: `${day(0)} 08:00:00`, window: [day(0), day(1)] }]),
+    proposal: { ok: false },
+    weeks: {}
+  })
+  const html = render('page')
+  const later = [1, 2, 3, 4, 5, 6].map(day).filter(d => d < day(7 - ((new Date().getDay() + 6) % 7)))
+  const columns = (html.match(/repeating-linear-gradient/g) || []).length
+  const unreadWorkdays = later.filter(d => [1, 2, 3, 4, 5].includes(new Date(`${d}T12:00:00`).getDay()))
+  assert.equal(columns, unreadWorkdays.length)
+  assert.equal((html.match(/· not read/g) || []).length, unreadWorkdays.length)
+})
+
+test('with no calendar read the week says so instead of looking free', () => {
+  setFixture({ status: status([]), proposal: { ok: false }, weeks: {} })
+  const shown = text(render('page'))
+  assert.match(shown, /No calendar read/)
+  assert.match(shown, /No calendar read yet\. Ask Hermes to read your calendar, or to plan something\./)
+  assert.doesNotMatch(shown, /Refresh/)
+})
+
+test('weekend columns appear only when there is something on them', () => {
+  const saturday = day(((6 - new Date().getDay()) + 7) % 7)
+  setFixture({ status: status([]), proposal: { ok: false }, weeks: {} })
+  assert.doesNotMatch(text(render('page')), /Sat,/)
+  if (saturday >= monday && saturday < day(7)) {
+    setFixture({
+      status: status([]),
+      proposal: { ok: false },
+      weeks: { [monday]: { ok: true, events: [{ kind: 'busy', title: 'Hike', start: `${saturday} 10:00:00`, end: `${saturday} 12:00:00` }] } }
+    })
+    assert.match(text(render('page')), /Sat,/)
+  }
+})
+
+test('the chat plan card renders the proposal it names', () => {
+  setFixture({ status: status([]), proposal: proposal([[day(1), '09:00', '10:00', 'Deck']]), weeks: {} })
+  const item = items.find(i => i.id === 'plan-card')
+  item.props = { attrs: { proposal: '808f1223-73c5-4a48-bade-076a05225e07' } }
+  assert.match(text(render('plan-card')), /Plan proposal 0hard\/0medium\/0soft 1 placed/)
+})

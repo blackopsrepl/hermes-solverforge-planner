@@ -28,7 +28,7 @@ PLUGIN_DEPS    := $(shell sed -n '/^python_dependencies:/,/^[a-z_]*:/s/^  - "\(.
 PYTEST         := uv run --no-project --python $(PYTHON) --with pytest $(PLUGIN_DEPS) python -m pytest
 
 # ============== Phony Targets ==============
-.PHONY: banner help setup engine test test-engine test-plugin lint fmt fmt-check clippy \
+.PHONY: banner help setup engine test test-engine test-plugin test-desktop lint fmt fmt-check clippy \
         validate check dist dist-all install-dev uninstall-dev version clean
 
 .DEFAULT_GOAL := help
@@ -51,9 +51,10 @@ help: banner
 	@printf "  $(ARROW) $(BOLD)uninstall-dev$(RESET) Remove the plugin from Hermes\n\n"
 	@printf "$(CYAN)$(BOLD)Verify$(RESET)\n"
 	@printf "  $(ARROW) $(BOLD)check$(RESET)         The full gate: lint, engine tests, plugin tests, Hermes validation\n"
-	@printf "  $(ARROW) $(BOLD)test$(RESET)          Engine and plugin tests\n"
+	@printf "  $(ARROW) $(BOLD)test$(RESET)          Engine, plugin and Desktop tests\n"
 	@printf "  $(ARROW) $(BOLD)test-engine$(RESET)   Engine unit, incremental-score and CLI tests\n"
 	@printf "  $(ARROW) $(BOLD)test-plugin$(RESET)   Plugin end-to-end tests against the real engine\n"
+	@printf "  $(ARROW) $(BOLD)test-desktop$(RESET)  Render the Desktop half against a stand-in SDK (Node 22+)\n"
 	@printf "  $(ARROW) $(BOLD)lint$(RESET)          rustfmt and clippy\n"
 	@printf "  $(ARROW) $(BOLD)fmt$(RESET)           Format the engine\n"
 	@printf "  $(ARROW) $(BOLD)validate$(RESET)      hermes plugins validate + doctor (catalog gate)\n\n"
@@ -132,7 +133,13 @@ test-plugin:
 		printf "$(GREEN)$(CHECK) Plugin tests passed$(RESET)\n" || \
 		(printf "$(RED)$(CROSS) Plugin tests failed$(RESET)\n" && exit 1)
 
-test: test-engine test-plugin
+test-desktop:
+	@printf "$(ARROW) $(BOLD)Desktop render tests...$(RESET)\n"
+	@cd tests/desktop && npm ci --no-audit --no-fund --silent && node --test && \
+		printf "$(GREEN)$(CHECK) Desktop tests passed$(RESET)\n" || \
+		(printf "$(RED)$(CROSS) Desktop tests failed$(RESET)\n" && exit 1)
+
+test: test-engine test-plugin test-desktop
 
 validate:
 	@printf "$(ARROW) $(BOLD)Hermes catalog validation...$(RESET)\n"

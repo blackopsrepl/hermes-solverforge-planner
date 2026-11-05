@@ -1,0 +1,14 @@
+{
+  "name": "solverforge-planner-desktop-tests",
+  "private": true,
+  "type": "module",
+  "description": "Renders the Desktop half against a stand-in for @hermes/plugin-sdk.",
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@hermes/plugin-sdk": "file:./sdk",
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
+  }
+}
