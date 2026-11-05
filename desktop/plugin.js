@@ -289,7 +289,7 @@ function Unscheduled({ plan }) {
 function PlanView({ plan, compact }) {
   const days = daysOf(plan.scheduled)
   const busy = useWeek(days[0], days.length ? Math.max(1, (new Date(days.at(-1)) - new Date(days[0])) / 864e5 + 1) : 1)
-  const busyEvents = (busy.data?.events || []).filter(e => e.calendar?.startsWith('Busy · '))
+  const busyEvents = (busy.data?.events || []).filter(e => e.kind === 'busy')
 
   return jsxs('div', {
     style: { display: 'flex', flexDirection: 'column', gap: 8 },
