@@ -62,8 +62,11 @@ class Planner:
 
     @property
     def publish_to(self) -> str | None:
-        """The calendar the user wants planned blocks in, as they named it; None means not chosen."""
-        return self.store.settings().get("publish_calendar") or None
+        """The calendar source planner_push writes to, or None when there is no single one yet."""
+        try:
+            return self._push_target()
+        except EngineError:
+            return None
 
     # -- calendars --------------------------------------------------------
     #
@@ -120,10 +123,6 @@ class Planner:
         iso = lambda s: datetime.strptime(s, STAMP).replace(tzinfo=zone).isoformat()
         return {"event_id": event["event_id"], "title": event["title"], "start": iso(event["start"]),
                 "end": iso(event["end"]), "timezone": tz, "description": calendars.description(event["event_id"])}
-
-    def _unpublished(self, task_ids: Iterable[str]) -> list[dict]:
-        wanted = set(task_ids)
-        return [e for e in self.store.events() if e["task_id"] in wanted and not e["seen_at"]]
 
     def changed(self, what: str, **detail: Any) -> None:
         if self._on_change is None:
@@ -257,8 +256,9 @@ class Planner:
             calendars=[{"source": c["source"], "read_at": c["read_at"][:19],
                         "window": [c["window_start"][:10], c["window_end"][:10]]} for c in self.store.calendars()],
             publish_to=self.publish_to,
-            not_on_calendar_yet=[{"event_id": e["event_id"], "title": e["title"], "start": e["start"]}
-                                 for e in self.store.events() if not e["seen_at"]] if self.store.calendars() else [],
+            local_calendar=str(self.data_dir / "exports" / "planner.ics"),
+            clashes=self.clashes(),
+            push=self._push_summary(),
             inbox=len(self.store.tasks("inbox")),
             applied=len(self.store.tasks("applied")),
             latest_proposal=({"id": latest["id"], "score": latest["score"], "created_at": latest["created_at"],
@@ -344,16 +344,12 @@ class Planner:
         task = self._task_or_fail(args["id"])
         if task["state"] != "applied":
             raise EngineError("not_applied", "that task is not on the calendar")
-        events = self.store.events(task["id"])
+        on_calendar = any(e["seen_at"] or e["handed_at"] for e in self.store.events(task["id"]))
         updated = self.store.unschedule(task["id"])
+        self._write_local_calendar()
         self.changed("tasks")
-        remove = [{"event_id": e["event_id"], "title": e["title"], "start": e["start"], "end": e["end"],
-                   "seen_in": e["seen_in"]} for e in events]
-        return _ok(task=updated, delete_from_calendar=remove, next=(
-            ("Delete each event in delete_from_calendar from the user's calendar with their calendar tool, "
-             "matching it by event_id (the event's id, or the 'solverforge-planner:<event_id>' line in its "
-             "description); skip any that are not there. Then " if remove else "")
-            + "planner_optimize to place the task again."))
+        return _ok(task=updated, next=("Its event comes off the user's calendar at the next planner_push. "
+                                       if on_calendar else "") + "planner_optimize to place the task again.")
 
     def depend(self, args: dict) -> str:
         before, after = self._task_or_fail(args["before"]), self._task_or_fail(args["after"])
@@ -425,7 +421,7 @@ class Planner:
         self.changed("settings")
         return _ok(settings=settings)
 
-    def _busy_rows(self, events: Iterable[dict], tz: str | None) -> tuple[list[dict], dict[str, tuple[str, str]]]:
+    def _busy_rows(self, events: Iterable[dict], tz: str | None) -> tuple[list[dict], dict[str, tuple]]:
         """Busy rows, and the planner's own events among them (event id -> calendar times)."""
         known = self.store.known_event_ids()
         rows, seen = [], {}
@@ -443,7 +439,8 @@ class Planner:
                     raise ValueError(f"event {title!r} ends before it starts")
             own = calendars.planner_ids(event.get("id"), event.get("uid"), event.get("description")) & known
             if own:
-                seen[own.pop()] = (s, e)  # a block of ours: pinned as applied, not foreign busy time
+                # A block of ours: pinned as applied, not foreign busy time.
+                seen[own.pop()] = (s, e, str(event.get("id") or "") or None)
                 continue
             rows.append({"title": title, "start": s, "end": e})
         return rows, seen
@@ -474,14 +471,63 @@ class Planner:
             window = (self.wall_clock(args["window_start"], tz), self.wall_clock(args["window_end"], tz))
             if window[1] <= window[0]:
                 raise ValueError("window_end must be after window_start")
-        rows, seen = self._busy_rows(args.get("events") or [], tz)  # validate before replacing
-        before = {e["event_id"]: (e["start"], e["end"]) for e in self.store.events()}
-        stored = self.store.replace_busy(source, rows, window, seen if window else None)
-        moved = [{"event_id": k, "from": before[k][0], "to": v[0]} for k, v in seen.items()
-                 if window and before.get(k) and before[k] != v]
+        rows, own = self._busy_rows(args.get("events") or [], tz)  # validate before replacing
+        if window is None:
+            stored = self.store.replace_busy(source, rows)
+            self.changed("busy")
+            return _ok(source=source, kind=kind, stored=stored, next="planner_optimize")
+        events = self.store.events()
+        live = {e["event_id"]: e for e in events}
+        seen = {k: v for k, v in own.items() if k in live}
+        # An event that vanished from an earlier pull and shows up again was moved, not deleted: its task
+        # goes back there if it is still waiting in the inbox; otherwise the event is the user's now.
+        released = self.store.released()
+        tasks = {t["id"]: t for t in self.store.tasks()}
+        back, kept = [], []
+        for event_id in [k for k in own if k in released]:
+            task = tasks.get(released[event_id])
+            start, end, cloud = own.pop(event_id)
+            if task and task["state"] == "inbox":
+                back.append((event_id, task, start, end, cloud))
+            else:
+                self.store.forget_released(event_id)
+                rows.append({"title": task["title"] if task else "(planner event)", "start": start, "end": end})
+                kept.append({"title": task["title"] if task else None, "start": start})
+        # The planner's own events this calendar showed before and no longer does were deleted there:
+        # those tasks go back to the inbox instead of being pushed back.
+        gone = [e for e in events if e["seen_in"] == source and e["event_id"] not in seen
+                and e["start"] < window[1] and e["end"] > window[0]]
+        # Removals the calendar no longer shows are done; those it still shows get their id for the delete.
+        removals = [r for r in self.store.removals() if r["calendar"] in (None, source)
+                    and r["start"] < window[1] and r["end"] > window[0]]
+        done = [r["event_id"] for r in removals if r["event_id"] not in own]
+        moved = [{"event_id": k, "title": live[k]["title"], "from": live[k]["start"], "to": v[0]}
+                 for k, v in seen.items() if (live[k]["start"], live[k]["end"]) != v[:2]]
+        stored = self.store.replace_busy(source, rows, window, seen)
+        for r in removals:
+            if r["event_id"] in own:
+                self.store.set_removal_seen(r["event_id"], source, own[r["event_id"]][2])
+        self.store.confirm_removed(done)
+        unscheduled = []
+        for e in gone:
+            self.store.unschedule(e["task_id"])
+            self.store.confirm_removed([e["event_id"]])
+            self.store.release(e["event_id"], e["task_id"])
+            unscheduled.append({"task_id": e["task_id"], "title": e["title"], "was": e["start"]})
+        returned = []
+        for event_id, task, start, end, cloud in back:
+            self.store.readopt(event_id, task["id"], start, end, source, cloud)
+            returned.append({"task_id": task["id"], "title": task["title"], "at": start})
+        if moved or unscheduled or returned:
+            self._write_local_calendar()
         self.changed("busy")
-        return _ok(source=source, kind=kind, stored=stored, planner_events_found=len(seen) if window else 0,
-                   moved_on_calendar=moved, next="planner_optimize, or planner_apply if a plan is waiting")
+        return _ok(source=source, kind=kind, stored=stored, planner_events_found=len(seen),
+                   moved_on_calendar=moved, removed_on_calendar=unscheduled, back_on_calendar=returned,
+                   now_the_users=kept,
+                   next=("Tell the user which tasks went back to the inbox because their events are gone from "
+                         "the calendar (deleted, or moved outside the pulled days; one that shows up again is "
+                         "pinned there again). " if unscheduled else "")
+                   + "planner_optimize, planner_apply if a plan is waiting, or planner_push.")
 
     def busy_from_ics(self, args: dict) -> str:
         source = self._source(args)
@@ -526,7 +572,20 @@ class Planner:
         events += [{"title": a["title"], "start": a["start"], "end": a["end"], "kind": "planned",
                     "task_id": a["task_id"]} for a in self.store.applied(lo, hi)]
         return _ok(window={"start": str(first), "end": str(last)},
-                   events=sorted(events, key=lambda e: e["start"]))
+                   events=sorted(events, key=lambda e: e["start"]),
+                   clashes=[c for c in self.clashes() if lo <= c["start"] < hi])
+
+    def clashes(self) -> list[dict]:
+        """Blocks already on the plan with a pulled calendar event now on top of them."""
+        names = {c["source"] for c in self.store.calendars()}
+        found = []
+        for block in self.store.applied():
+            for hit in self.store.busy(block["start"], block["end"]):
+                if hit["source"] in names:
+                    found.append({"task_id": block["task_id"], "title": block["title"], "start": block["start"],
+                                  "end": block["end"], "with": hit["title"], "with_start": hit["start"],
+                                  "with_end": hit["end"], "calendar": hit["source"]})
+        return found
 
     def optimize(self, args: dict) -> str:
         problems = self.problems()
@@ -555,64 +614,111 @@ class Planner:
         return _ok(**self.describe(proposal))
 
     def apply(self, args: dict) -> str:
+        """Pin a proposal's blocks on the planner's own calendar. Nothing leaves this computer here:
+        planner_push puts the planner's calendar on a cloud calendar."""
         proposal = self.store.proposal(str(args["id"]))
         if proposal is None:
             raise EngineError("not_found", f"no proposal {args['id']!r}")
         tz = proposal["body"]["timezone"]
         items = [i for i in proposal["body"]["items"] if i["scheduled"]]
-        tracked = bool(self.store.calendars())
-        if not proposal.get("applied_at"):
-            reasons = self.store.stale_reasons(proposal)
-            if reasons:
-                raise EngineError("stale", f"cannot apply: {', '.join(reasons)}; run planner_optimize again")
-            if items:
-                window = (min(i["start_at"] for i in items), max(i["end_at"] for i in items))
-                made = (datetime.strptime(proposal["made_at"], READ_STAMP) if proposal.get("made_at")
-                        else datetime.strptime(proposal["created_at"], STAMP) + timedelta(seconds=1))
-                self._require_fresh(window, after=made)
-            conflicts = self._conflicts(items)
-            if conflicts:
-                raise EngineError("calendar_conflict", "new on the calendar since this plan was made: "
-                                  + "; ".join(conflicts) + ". Run planner_optimize again.")
-            self.store.apply(proposal, {i["task_id"]: calendars.event_id(i["task_id"], i["start_at"], i["end_at"],
-                                                                           proposal["id"]) for i in items})
-            self.changed("applied", proposal_id=proposal["id"])
-        elif not tracked:
-            raise EngineError("stale", "cannot apply: already_applied")
-        else:
-            # Events handed out before may have been created since: only a calendar read made after
-            # that shows which, and handing them out blind could create one twice.
-            handed = [e["handed_at"] for e in self.store.events() if e["task_id"] in
-                      {i["task_id"] for i in items} and e["handed_at"] and not e["seen_at"]]
-            if handed:
-                window = (min(i["start_at"] for i in items), max(i["end_at"] for i in items))
-                self._require_fresh(window, after=datetime.strptime(max(handed), READ_STAMP),
-                                    why="read before the last events were handed out")
-        # Applying an applied plan again only hands out its events the calendar does not show yet.
+        reasons = self.store.stale_reasons(proposal)
+        if reasons:
+            raise EngineError("stale", f"cannot apply: {', '.join(reasons)}; run planner_optimize again")
+        if items:
+            window = (min(i["start_at"] for i in items), max(i["end_at"] for i in items))
+            made = (datetime.strptime(proposal["made_at"], READ_STAMP) if proposal.get("made_at")
+                    else datetime.strptime(proposal["created_at"], STAMP) + timedelta(seconds=1))
+            self._require_fresh(window, after=made)
+        conflicts = self._conflicts(items)
+        if conflicts:
+            raise EngineError("calendar_conflict", "new on the calendar since this plan was made: "
+                              + "; ".join(conflicts) + ". Run planner_optimize again.")
+        self.store.apply(proposal, {i["task_id"]: calendars.event_id(i["task_id"], i["start_at"], i["end_at"],
+                                                                       proposal["id"]) for i in items})
+        self.changed("applied", proposal_id=proposal["id"])
         mine = {i["task_id"] for i in items}
-        events = [e for e in self.store.events() if e["task_id"] in mine]
         export = self.export_ics(None, f"proposal-{proposal['id'][:8]}.ics", only=mine)
-        self.export_ics(None, "planner.ics")
+        local = self._write_local_calendar()
         written = [{"task_id": e["task_id"], "title": e["title"], "start": e["start"], "end": e["end"]}
-                   for e in events]
-        if not tracked:
-            return _ok(proposal_id=proposal["id"], written=written, timezone=tz, ics=str(export), create_on_calendar=[],
-                       next=(f"Offer the calendar file by writing MEDIA:{export} on its own line; it imports "
-                             "into any calendar app."))
-        missing = [e for e in events if not e["seen_at"]]
-        self.store.mark_handed_out([e["event_id"] for e in missing])
+                   for e in self.store.events() if e["task_id"] in mine]
+        target = self._push_target()
+        return _ok(proposal_id=proposal["id"], written=written, timezone=tz, ics=str(export),
+                   local_calendar=str(local), push_to=target,
+                   next=(f"The blocks are on the planner's calendar. Offer to put them on the user's '{target}' "
+                         "calendar too: planner_push." if target else
+                         f"The blocks are on the planner's calendar. Offer the file by writing MEDIA:{export} on its "
+                         "own line; it imports into any calendar app, and importing it again updates instead of "
+                         "duplicating."))
+
+    def _push_target(self, requested: str | None = None) -> str | None:
+        """The calendar source planner_push writes to: the one asked for, the one saved in the settings,
+        else the only calendar source there is."""
+        names = [c["source"] for c in self.store.calendars()]
+        for wanted in (requested, self.store.settings().get("publish_calendar")):
+            if wanted:
+                if wanted not in names:
+                    raise EngineError("not_found", f"no calendar source {wanted!r}; pull it first with "
+                                      f"planner_busy_set kind=calendar (calendars: {', '.join(names) or 'none'})")
+                return wanted
+        return names[0] if len(names) == 1 else None
+
+    def push(self, args: dict) -> str:
+        """What to change on a cloud calendar so it shows the planner's calendar: events to create and
+        events to delete, all of them the planner's own. Needs a fresh pull of that calendar, and after
+        a hand-out a pull showing what arrived, so nothing is ever created twice."""
+        target = self._push_target(args.get("calendar"))
+        if target is None:
+            names = [c["source"] for c in self.store.calendars()]
+            raise EngineError("no_calendar", "which calendar? " + (
+                f"pass calendar= one of {', '.join(names)}, or save it with planner_settings publish_calendar"
+                if names else "pull the user's calendar first with planner_busy_set kind=calendar"))
+        cal = next(c for c in self.store.calendars() if c["source"] == target)
+        read = datetime.strptime(cal["read_at"], READ_STAMP)
+        if datetime.now() - read > timedelta(minutes=FRESH_MINUTES):
+            raise EngineError("calendar_stale", f"pull {target} again first (last pull {cal['read_at'][:16]}): a push "
+                                                "is worked out from what that calendar shows now")
+        events = self.store.events()
+        removals = [r for r in self.store.removals() if r["calendar"] in (None, target)]
+        # Handed out and not yet confirmed by a pull: created events not seen yet, deletes still there.
+        pending = [e["handed_at"] for e in events if e["handed_at"] and not e["seen_at"]]
+        pending += [r["handed_at"] for r in removals if r["handed_at"]]
+        if pending and read <= datetime.strptime(max(pending), READ_STAMP):
+            raise EngineError("calendar_stale", (
+                f"changes were handed out at {max(pending)[11:16]}; pull {target} again first, so the planner "
+                "sees which were made. Pushing before that could create an event twice."))
+        tz = self.timezone() or "UTC"
+        create = [e for e in events if not e["seen_at"]]
+        delete = [r for r in removals if r["cloud_id"]]
+        self.store.mark_handed_out([e["event_id"] for e in create])
+        self.store.mark_removal_handed([r["event_id"] for r in delete])
         return _ok(
-            proposal_id=proposal["id"], written=written, timezone=tz, ics=str(export), publish_to=self.publish_to,
-            create_on_calendar=[self._event_payload(e, tz) for e in missing],
-            already_on_calendar=len(events) - len(missing),
-            next=(("Create each event in create_on_calendar with the user's calendar tool"
-                   + (f" in their '{self.publish_to}' calendar" if self.publish_to else
-                      " (ask once which calendar, then save it with planner_settings publish_calendar)")
-                   + ": use event_id as the event's id when the tool accepts one (Google Calendar does) and "
-                   "the description exactly as given. Then read that calendar again and pass it with "
-                   "planner_busy_set, so the planner sees the events arrived; planner_apply on this proposal "
-                   "again lists any still missing, and never one already there.") if missing else
-                  "Every block is already on the calendar."))
+            calendar=target,
+            create=[self._event_payload(e, tz) for e in create],
+            delete=[{"event_id": r["event_id"], "id": r["cloud_id"], "title": r["title"], "start": r["start"]}
+                    for r in delete],
+            already_there=sum(1 for e in events if e["seen_at"]),
+            next=(("Make these changes on the user's calendar with their calendar tool: create each event "
+                   "in create with its title, start, end and description exactly (and event_id as the "
+                   "event's id when the tool takes one; an 'already exists' answer means it is there), and "
+                   "delete each event in delete by its id. Then pull the calendar again (planner_busy_set "
+                   "kind=calendar) so the planner confirms them.") if create or delete else
+                  f"{target} already shows the planner's calendar."))
+
+    def _push_summary(self) -> dict | None:
+        """How far the cloud calendar is behind the planner's calendar, as of the last pull."""
+        try:
+            target = self._push_target()
+        except EngineError:
+            target = None
+        if target is None:
+            return None
+        return {"calendar": target,
+                "create": sum(1 for e in self.store.events() if not e["seen_at"]),
+                "delete": sum(1 for r in self.store.removals() if r["calendar"] in (None, target))}
+
+    def _write_local_calendar(self) -> Path:
+        """planner.ics: the planner's own calendar, rewritten whenever a block changes."""
+        return self.export_ics(None, "planner.ics")
 
     def export_ics(self, blocks: list[dict] | None, name: str, only: set[str] | None = None) -> Path:
         """Write blocks (default: every applied block, or those of the ``only`` tasks) as an .ics file,
@@ -638,15 +744,11 @@ class Planner:
             blocks = "; ".join(f"{s['title']} {s['day']} {s['start'][11:16]}-{s['end'][11:16]}"
                                for s in summary["scheduled"][:8])
             more = len(summary["scheduled"]) - 8
-            if proposal.get("applied_at"):
-                missing = self._unpublished(s["task_id"] for s in summary["scheduled"])
-                return f"Add the {len(missing)} planned event(s) not yet on your calendar"
-            target = f"your “{self.publish_to}” calendar" if self.publish_to else "your calendar"
-            return (f"Add {len(summary['scheduled'])} block(s) to {target}, score {summary['score']}: "
-                    f"{blocks}{f' (+{more} more)' if more > 0 else ''}. Existing events are not changed.")
+            return (f"Put {len(summary['scheduled'])} block(s) on the planner's calendar, score {summary['score']}: "
+                    f"{blocks}{f' (+{more} more)' if more > 0 else ''}")
         if tool_name == "planner_task_unschedule":
             task = self.store.task(str(args.get("id") or ""))
-            where = " (and delete its event from your calendar)" if task and self.store.events(task["id"]) else ""
+            where = " (its event leaves your calendar at the next push)" if task and self.store.events(task["id"]) else ""
             return f"Take '{task['title'] if task else args.get('id')}' off the calendar and back to the inbox{where}"
         return tool_name
 
@@ -658,7 +760,7 @@ METHODS = {
     "planner_depend": "depend", "planner_settings": "settings_tool",
     "planner_busy_set": "busy_set", "planner_busy_from_ics": "busy_from_ics",
     "planner_week": "week", "planner_optimize": "optimize",
-    "planner_proposal": "proposal", "planner_apply": "apply",
+    "planner_proposal": "proposal", "planner_apply": "apply", "planner_push": "push",
 }
 
 

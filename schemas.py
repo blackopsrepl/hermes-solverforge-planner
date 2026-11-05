@@ -89,8 +89,8 @@ TASK_UNSCHEDULE = {
     "name": "planner_task_unschedule",
     "description": (
         "Move an applied task back to the inbox so the next planner_optimize can place it again. "
-        "Returns the planner's events for it in delete_from_calendar, for you to delete with the "
-        "user's calendar tool. Requires the user's approval."
+        "If its event reached a cloud calendar, the next planner_push lists it to delete there. "
+        "Requires the user's approval."
     ),
     "parameters": {
         "type": "object",
@@ -131,7 +131,7 @@ SETTINGS = {
             "solve_seconds": {"type": "integer", "minimum": 1, "maximum": 60},
             "focus_window": {"type": "string", "description": "Preferred hours for high-load work, 'HH:MM-HH:MM'."},
             "shallow_window": {"type": "string", "description": "Preferred hours for low-load work, 'HH:MM-HH:MM'."},
-            "publish_calendar": {"type": "string", "description": "Which of the user's calendars planned blocks go to, as they name it, e.g. 'Google: Planner'."},
+            "publish_calendar": {"type": "string", "description": "The pulled calendar source planner_push writes to, e.g. 'google: primary'."},
         },
     },
 }
@@ -139,15 +139,15 @@ SETTINGS = {
 BUSY_SET = {
     "name": "planner_busy_set",
     "description": (
-        "Tell the planner what is already on the user's time. kind=calendar: the events you just "
-        "read from one of the user's calendars with their calendar tool (google-workspace, "
-        "microsoft365, ...), every event in window_start..window_end, recurring ones as their "
-        "single occurrences. Once a calendar has been passed, every planner_optimize needs it "
-        "read again within 15 minutes, and every planner_apply needs it read after the plan was "
-        "made. Pass each event's id and description too: that is how the planner finds its own "
-        "events. kind=other: time the user tells you about ('I'm out Thursday afternoon'), kept "
-        "until replaced. Each call replaces everything stored for that source; remove=true drops "
-        "a source the user no longer wants planned around."
+        "Pull: tell the planner what is on one of the user's calendars. kind=calendar: every event "
+        "you just read with their calendar tool (google-workspace, microsoft365, ...) in "
+        "window_start..window_end, recurring ones as single occurrences, each with its id and "
+        "description (that is how the planner finds its own events). The planner adopts its own "
+        "events moved there, sends tasks whose events were deleted there back to the inbox "
+        "(removed_on_calendar), and confirms a push. Once a calendar has been pulled, "
+        "planner_optimize needs it pulled within 15 minutes and planner_apply after the plan. "
+        "kind=other: time the user tells you about ('I'm out Thursday afternoon'), kept until "
+        "replaced. Each call replaces that source; remove=true drops it."
     ),
     "parameters": {
         "type": "object",
@@ -236,12 +236,11 @@ PROPOSAL = {
 APPLY = {
     "name": "planner_apply",
     "description": (
-        "Pin a proposal's blocks after the user approves. Needs every calendar source read again "
-        "after the plan was made (calendar_stale otherwise), and is refused if anything there now "
-        "overlaps a block, or if tasks or settings changed. Returns create_on_calendar: the events "
-        "for you to create with the user's calendar tool, each with a fixed event_id. Calling it "
-        "again on an applied proposal returns only the events the calendar does not show yet, so "
-        "nothing is ever added twice. Also returns an .ics file."
+        "Pin a proposal's blocks on the planner's own calendar after the user approves. Needs every "
+        "pulled calendar pulled again after the plan was made (calendar_stale otherwise), and is "
+        "refused if anything there now overlaps a block, or if tasks or settings changed. Nothing "
+        "leaves this computer: planner_push then puts the blocks on the user's cloud calendar. "
+        "Returns an .ics file too."
     ),
     "parameters": {
         "type": "object",
@@ -250,7 +249,26 @@ APPLY = {
     },
 }
 
+PUSH = {
+    "name": "planner_push",
+    "description": (
+        "Work out what to change on a cloud calendar so it shows the planner's calendar: create (blocks "
+        "not on it yet, each with a fixed event_id and a marker in its description) and delete (the "
+        "planner's events for tasks taken off the plan, by the calendar's own id). Only the planner's "
+        "own events are ever listed. Needs that calendar pulled within 15 minutes, and after a push, "
+        "pulled again before the next one, so no event is ever created twice. You carry the changes "
+        "out with the user's calendar tool, then pull to confirm."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "calendar": {"type": "string", "description": "The source name of a pulled calendar; default: "
+                                                          "publish_calendar, or the only one pulled."},
+        },
+    },
+}
+
 ALL = [
     STATUS, INBOX, TASK_CREATE, TASK_UPDATE, TASK_DELETE, TASK_UNSCHEDULE, DEPEND,
-    SETTINGS, BUSY_SET, BUSY_ICS, WEEK, OPTIMIZE, PROPOSAL, APPLY,
+    SETTINGS, BUSY_SET, BUSY_ICS, WEEK, OPTIMIZE, PROPOSAL, APPLY, PUSH,
 ]

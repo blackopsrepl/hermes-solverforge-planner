@@ -97,6 +97,16 @@ def apply(body: dict) -> dict:
     return _call("apply", {"id": proposal_id})
 
 
+@router.post("/unschedule")
+def unschedule(body: dict) -> dict:
+    """Desktop's Re-plan, after the user confirmed in its dialog: the same consent the agent's
+    approval prompt asks for."""
+    task_id = str((body or {}).get("id") or "").strip()
+    if not task_id:
+        raise HTTPException(status_code=400, detail="id is required")
+    return _call("task_unschedule", {"id": task_id})
+
+
 @router.post("/install")
 def install() -> dict:
     planner = _planner()

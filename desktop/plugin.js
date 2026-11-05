@@ -42,18 +42,6 @@ let rest = () => Promise.reject(new Error('SolverForge Planner not loaded'))
 const text = (color, size = '0.75rem') => ({ color: `var(${color})`, fontSize: size })
 const qk = (...parts) => [ID, ...parts]
 
-// Only the agent has a calendar tool. When a plan or an apply needs the user's calendars
-// read, or planned events created there, the request goes to the chat instead.
-const NEEDS_AGENT = new Set(['calendar_stale'])
-
-function askHermes(prompt) {
-  const sent = host.composer?.submit?.(null, prompt)
-  if (!sent) {
-    host.notify({ kind: 'info', message: `Planner: ask Hermes in a chat: “${prompt}”` })
-  }
-  return sent
-}
-
 function useProposal(id) {
   return useQuery({
     queryKey: qk('proposal', id || 'latest'),
@@ -76,14 +64,15 @@ function useApply() {
 
   return useMutation({
     mutationFn: id => rest('/apply', { method: 'POST', body: { id } }),
-    onSuccess: (result, id) => {
+    onSuccess: result => {
       client.invalidateQueries({ queryKey: [ID] })
-      if (result?.ok && result.create_on_calendar?.length) {
-        askHermes(`Put the applied planner proposal ${id} on my calendar`)
-      } else if (result?.ok) {
-        host.notify({ kind: 'success', message: `Planner: ${result.written.length} block(s) applied` })
-      } else if (NEEDS_AGENT.has(result?.code)) {
-        askHermes(`Read my calendars and apply planner proposal ${id}`)
+      if (result?.ok) {
+        host.notify({
+          kind: 'success',
+          message: `Planner: ${result.written.length} block(s) on your plan${
+            result.push_to ? `. Ask Hermes to update ${result.push_to} to put them there too.` : ''
+          }`
+        })
       } else {
         host.notify({ kind: 'error', message: `Planner: ${result?.error || 'apply refused'}` })
       }
@@ -106,51 +95,136 @@ const isoDay = d =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 
 const KINDS = {
-  busy: { suffix: ' (busy)', fill: '--ui-text-quaternary', mix: 18, edge: '--ui-stroke-secondary', ink: '--ui-text-tertiary', z: 1 },
-  applied: { suffix: ' (on your plan)', fill: '--ui-accent', mix: 12, edge: '--ui-accent', ink: '--ui-text-secondary', z: 2 },
-  proposed: { suffix: ' (proposed)', fill: '--ui-accent', mix: 26, edge: '--ui-accent', ink: '--ui-text-primary', z: 3, dashed: true }
+  busy: { suffix: ' (busy)', fill: '--ui-text-quaternary', mix: 18, ink: '--ui-text-tertiary', z: 1 },
+  applied: { suffix: ' (on your plan)', fill: '--ui-accent', mix: 12, ink: '--ui-text-secondary', z: 2 },
+  proposed: { suffix: ' (proposed)', fill: '--ui-accent', mix: 26, ink: '--ui-text-primary', z: 3, dashed: true }
+}
+const AMBER = 'var(--ui-warning, #d89614)'
+const RED = 'var(--ui-destructive, #e5484d)'
+// Calendar edges: the user's own calendar keeps the neutral edge, the others get distinct hues.
+const HUES = [205, 145, 280, 25, 330, 95]
+const calendarEdge = (source, sources) => {
+  const i = sources.indexOf(source)
+  return i <= 0 ? 'var(--ui-stroke-secondary)' : `hsl(${HUES[(i - 1) % HUES.length]} 55% 55%)`
+}
+const endMinute = b => (dayKey(b.end) > dayKey(b.start) ? 1440 : minutes(b.end))
+const overlaps = (a, b) => a.start < b.end && b.start < a.end
+
+/**
+ * Side-by-side lanes for one day, the way calendar apps draw overlapping events: each cluster of
+ * overlapping items is split into as many lanes as it needs at its busiest.
+ */
+function lanes(items) {
+  const sorted = [...items].sort((a, b) => a.start.localeCompare(b.start) || b.end.localeCompare(a.end))
+  const placed = []
+  let cluster = []
+  let clusterEnd = ''
+  const close = () => {
+    const width = Math.max(1, ...cluster.map(c => c.lane + 1))
+    cluster.forEach(c => (c.lanes = width))
+    cluster = []
+  }
+  for (const item of sorted) {
+    if (cluster.length && item.start >= clusterEnd) {
+      close()
+    }
+    const busyLanes = new Set(cluster.filter(c => overlaps(c.item, item)).map(c => c.lane))
+    let lane = 0
+    while (busyLanes.has(lane)) {
+      lane += 1
+    }
+    const entry = { item, lane, lanes: 1 }
+    cluster.push(entry)
+    placed.push(entry)
+    clusterEnd = cluster.length === 1 || item.end > clusterEnd ? item.end : clusterEnd
+  }
+  if (cluster.length) {
+    close()
+  }
+  return placed
 }
 
 /**
- * A compact day-column grid: busy time muted, blocks already on the plan in a light accent,
- * proposed blocks in the full accent with a dashed edge. Days in ``unread`` are outside every
- * calendar read and are hatched, so an empty day never passes for a free one.
+ * The same meeting on two calendars is one busy block: identical title and time collapse into
+ * one, which lists every calendar it came from.
  */
-function WeekGrid({ days, busy = [], applied = [], proposed = [], unread = new Set(), height = 240 }) {
+function mergeDuplicates(busy) {
+  const byKey = new Map()
+  for (const b of busy) {
+    const key = `${b.start}|${b.end}|${b.title.trim().toLowerCase()}`
+    const seen = byKey.get(key)
+    if (seen) {
+      seen.sources.push(b.source)
+    } else {
+      byKey.set(key, { ...b, sources: [b.source] })
+    }
+  }
+  return [...byKey.values()]
+}
+
+/**
+ * A compact day-column grid. Busy time is muted with a coloured edge per calendar, blocks already
+ * on the plan are in a light accent, proposed blocks in the full accent with a dashed edge.
+ * Overlapping items sit side by side. Two of the user's own events at once are double-booked
+ * (amber); an event on top of a planned block is a clash (red). Days in ``unread`` are outside
+ * every calendar read and are hatched, so an empty day never passes for a free one.
+ */
+function WeekGrid({ days, busy = [], applied = [], proposed = [], unread = new Set(), sources = [], height = 240 }) {
   if (!days.length) {
     return null
   }
-  const all = [...busy, ...applied, ...proposed].filter(b => days.includes(dayKey(b.start)))
+  const events = mergeDuplicates(busy)
+  const all = [...events, ...applied, ...proposed].filter(b => days.includes(dayKey(b.start)))
   const lo = Math.min(DAY_START * 60, ...all.map(b => minutes(b.start)))
-  const hi = Math.max(DAY_END * 60, ...all.map(b => (dayKey(b.end) > dayKey(b.start) ? 1440 : minutes(b.end))))
+  const hi = Math.max(DAY_END * 60, ...all.map(endMinute))
   const span = Math.max(60, hi - lo)
   const y = m => `${((Math.max(lo, m) - lo) / span) * 100}%`
   // Blocks keep their true length so back-to-back blocks never overlap; a block
   // too short for a line of text drops its label and keeps it in the tooltip.
   const labelFits = (start, end) => ((end - start) / span) * height >= 13
+  const today = isoDay(new Date())
 
-  const place = (b, kind) => {
-    const k = KINDS[kind]
+  const place = ({ item: b, lane, lanes: width }) => {
+    const k = KINDS[b.kind]
     const top = minutes(b.start)
-    const bottom = dayKey(b.end) > dayKey(b.start) ? 1440 : minutes(b.end)
-    const inset = kind === 'busy' ? 0 : 2
+    const bottom = endMinute(b)
+    const notes = []
+    let ring
+    if (b.kind === 'busy') {
+      if (applied.some(a => overlaps(a, b))) {
+        ring = RED
+        notes.push('clashes with a planned block')
+      } else if (events.some(o => o !== b.ref && overlaps(o, b))) {
+        ring = AMBER
+        notes.push('double-booked')
+      }
+      if (b.sources.length > 1) {
+        notes.push(`on ${b.sources.map(s => s).join(' and ')}`)
+      }
+    } else if (b.kind === 'applied' && events.some(o => overlaps(o, b))) {
+      ring = RED
+      notes.push('an event is now on top of this block')
+    }
+    const edge = b.kind === 'busy' ? calendarEdge(b.sources[0], sources) : 'var(--ui-accent)'
     return jsx(
       Tip,
       {
-        label: `${b.title}  ${hhmm(b.start)}–${hhmm(b.end)}${k.suffix}`,
+        label: `${b.title}  ${hhmm(b.start)}–${hhmm(b.end)}${k.suffix}${notes.length ? ` · ${notes.join(' · ')}` : ''}`,
         children: jsx('div', {
+          'data-kind': b.kind,
+          'data-mark': ring === RED ? 'clash' : ring === AMBER ? 'double-booked' : undefined,
           style: {
             position: 'absolute',
-            left: inset,
-            right: inset,
+            left: `calc(${(lane / width) * 100}% + 1px)`,
+            width: `calc(${100 / width}% - 2px)`,
             top: `calc(${y(top)} + 1px)`,
             height: `max(3px, calc(${y(bottom)} - ${y(top)} - 2px))`,
             borderRadius: 3,
             overflow: 'hidden',
             padding: '1px 4px',
             background: `color-mix(in srgb, var(${k.fill}) ${k.mix}%, transparent)`,
-            borderLeft: `2px solid var(${k.edge})`,
-            outline: k.dashed ? '1px dashed var(--ui-accent)' : undefined,
+            borderLeft: `2px solid ${edge}`,
+            outline: ring ? `1.5px solid ${ring}` : k.dashed ? '1px dashed var(--ui-accent)' : undefined,
             outlineOffset: -1,
             ...text(k.ink, '0.65rem'),
             lineHeight: 1.25,
@@ -159,7 +233,7 @@ function WeekGrid({ days, busy = [], applied = [], proposed = [], unread = new S
           children: labelFits(top, bottom) ? `${hhmm(b.start)} ${b.title}` : null
         })
       },
-      `${kind}-${b.start}-${b.title}`
+      `${b.kind}-${b.start}-${b.title}-${lane}`
     )
   }
 
@@ -167,7 +241,11 @@ function WeekGrid({ days, busy = [], applied = [], proposed = [], unread = new S
   for (let h = Math.ceil(lo / 60); h * 60 <= hi; h += 2) {
     hours.push(h)
   }
-  const today = isoDay(new Date())
+  const tagged = [
+    ...events.map(b => ({ ...b, kind: 'busy', ref: b })),
+    ...applied.map(b => ({ ...b, kind: 'applied' })),
+    ...proposed.map(b => ({ ...b, kind: 'proposed' }))
+  ]
 
   return jsxs('div', {
     style: { display: 'grid', gridTemplateColumns: `2.25rem repeat(${days.length}, minmax(0, 1fr))`, gap: 4 },
@@ -204,9 +282,10 @@ function WeekGrid({ days, busy = [], applied = [], proposed = [], unread = new S
         )
       }),
       ...days.map(d =>
-        jsxs(
+        jsx(
           'div',
           {
+            'data-day': d,
             style: {
               position: 'relative',
               height,
@@ -216,11 +295,7 @@ function WeekGrid({ days, busy = [], applied = [], proposed = [], unread = new S
                 ? 'repeating-linear-gradient(135deg, color-mix(in srgb, var(--ui-stroke-tertiary) 30%, transparent) 0 6px, transparent 6px 12px)'
                 : 'color-mix(in srgb, var(--ui-stroke-tertiary) 25%, transparent)'
             },
-            children: [
-              ...busy.filter(b => dayKey(b.start) === d).map(b => place(b, 'busy')),
-              ...applied.filter(b => dayKey(b.start) === d).map(b => place(b, 'applied')),
-              ...proposed.filter(b => dayKey(b.start) === d).map(b => place(b, 'proposed'))
-            ]
+            children: lanes(tagged.filter(b => dayKey(b.start) === d)).map(place)
           },
           `c-${d}`
         )
@@ -410,15 +485,90 @@ function PlanCard({ attrs, streaming }) {
   return frame(jsx(PlanView, { plan: query.data, compact: true }))
 }
 
+
+const ageOf = stamp => {
+  const minutes = Math.round((Date.now() - new Date(stamp.replace(' ', 'T')).getTime()) / 60_000)
+  return minutes < 1 ? 'just now' : minutes < 60 ? `${minutes} min ago` : minutes < 1440 ? `${Math.round(minutes / 60)} h ago` : `${Math.round(minutes / 1440)} d ago`
+}
+
+/** One chip per pulled calendar: its colour and how old the copy is. Pulls are done by Hermes. */
+function CalendarChips({ calendars, sources }) {
+  return jsx('span', {
+    style: { display: 'inline-flex', gap: 6, flexWrap: 'wrap' },
+    children: calendars.map(c =>
+      jsx(
+        Tip,
+        {
+          label: `${c.source}: pulled ${c.read_at.slice(0, 16)}. Ask Hermes to pull it again for a newer copy.`,
+          children: jsx(Badge, {
+            variant: 'muted',
+            children: jsxs('span', {
+              style: { display: 'inline-flex', alignItems: 'center', gap: 4 },
+              children: [
+                jsx('span', { style: { width: 6, height: 6, borderRadius: 3, background: calendarEdge(c.source, sources) } }),
+                c.source,
+                ` · ${ageOf(c.read_at)}`
+              ]
+            })
+          })
+        },
+        c.source
+      )
+    )
+  })
+}
+
+/** Take the clashing tasks off the plan and solve again, after the user confirms. */
+function ReplanButton({ clashes }) {
+  const [open, setOpen] = useState(false)
+  const client = useQueryClient()
+  const tasks = [...new Map(clashes.map(c => [c.task_id, c])).values()]
+  const replan = useMutation({
+    mutationFn: async () => {
+      for (const task of tasks) {
+        const result = await rest('/unschedule', { method: 'POST', body: { id: task.task_id } })
+        if (!result?.ok) return result
+      }
+      return rest('/optimize', { method: 'POST', body: {}, timeoutMs: 180_000 })
+    },
+    onSuccess: result => {
+      client.invalidateQueries({ queryKey: [ID] })
+      host.notify(
+        result?.ok
+          ? { kind: 'success', message: `Planner: new proposal ${result.score}; apply it to put the tasks back` }
+          : { kind: 'error', message: `Planner: ${result?.error || 're-plan failed'}` }
+      )
+    }
+  })
+  return jsxs('span', {
+    children: [
+      jsx(Button, { size: 'xs', disabled: replan.isPending, onClick: () => setOpen(true), children: replan.isPending ? 'Re-planning…' : 'Re-plan' }),
+      jsx(ConfirmDialog, {
+        open,
+        onClose: () => setOpen(false),
+        title: `Take ${tasks.length} task(s) off the plan and solve again?`,
+        description: [
+          ...tasks.map(c => `${c.title}  ${dayLabel(dayKey(c.start))} ${hhmm(c.start)}–${hhmm(c.end)}`),
+          '',
+          'They go back to the inbox and the solver places them around the calendar again. Nothing changes on a cloud calendar until it is pushed.'
+        ].join('\n'),
+        confirmLabel: 'Re-plan',
+        busyLabel: 'Re-planning…',
+        onConfirm: () => replan.mutateAsync()
+      })
+    ]
+  })
+}
+
 const WEEKDAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
 
 /**
- * The user's week as the planner knows it: their calendar from the last read, every block already
- * on their plan, and a pending proposal over them. The planner cannot read a calendar itself, so
- * Refresh asks Hermes to; the read time says how old the picture is.
+ * The user's week as the planner knows it: its own calendar (every block already on the plan),
+ * the copies of the cloud calendars Hermes last pulled, and a pending proposal over them.
  */
 function WeekView({ status }) {
   const [offset, setOffset] = useState(0)
+
   const monday = new Date()
   monday.setHours(12, 0, 0, 0)
   monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7) + 7 * offset)
@@ -431,7 +581,10 @@ function WeekView({ status }) {
   const proposal = useProposal(null)
   const pending = proposal.data?.ok && !proposal.data.applied_at ? proposal.data : null
   const events = data.data?.events || []
-  const calendars = status?.calendars || []
+  const clashes = data.data?.clashes || []
+  const calendarsRead = status?.calendars || []
+  const sources = calendarsRead.map(c => c.source)
+  const push = status?.push
   const working = new Set(Object.keys(status?.availability || {}))
   const proposed = pending ? pending.scheduled.filter(b => week.some(d => d.key === dayKey(b.start))) : []
   // Weekend columns only when the user works then or something is on them.
@@ -442,10 +595,10 @@ function WeekView({ status }) {
   // The planner reads and plans from today on: a past day is past, not unread.
   const today = isoDay(new Date())
   const unread = new Set(
-    calendars.length ? days.filter(d => d >= today && !calendars.some(c => c.window[0] <= d && d < c.window[1])) : []
+    calendarsRead.length
+      ? days.filter(d => d >= today && !calendarsRead.some(c => c.window[0] <= d && d < c.window[1]))
+      : []
   )
-  const oldest = calendars.map(c => c.read_at).sort()[0]
-  const sunday = week[6].key
 
   return jsxs('div', {
     style: { display: 'flex', flexDirection: 'column', gap: 8 },
@@ -458,25 +611,43 @@ function WeekView({ status }) {
           jsx(Button, { size: 'xs', variant: 'ghost', onClick: () => setOffset(offset + 1), children: '›' }),
           jsx('span', {
             style: { ...text('--ui-text-secondary', '0.75rem'), fontWeight: 500 },
-            children: `${dayLabel(week[0].key)} – ${dayLabel(sunday)}`
+            children: `${dayLabel(week[0].key)} – ${dayLabel(week[6].key)}`
           }),
           jsx('span', { style: { flex: 1 } }),
-          calendars.length
-            ? jsx('span', {
-                style: text('--ui-text-quaternary', '0.7rem'),
-                children: `Calendar read ${oldest.slice(8, 10)}/${oldest.slice(5, 7)} ${oldest.slice(11, 16)}`
-              })
-            : null,
-          calendars.length
-            ? jsx(Button, {
-                size: 'xs',
-                variant: 'outline',
-                onClick: () => askHermes('Read my calendars for the planner'),
-                children: 'Refresh'
+          jsx(CalendarChips, { calendars: calendarsRead, sources }),
+          push && (push.create || push.delete)
+            ? jsx(Tip, {
+                label: `Ask Hermes to update ${push.calendar}: ${push.create} to add, ${push.delete} to remove. Only the planner's own events change.`,
+                children: jsx(Badge, {
+                  variant: 'warn',
+                  children: `${push.create + push.delete} change(s) to push to ${push.calendar}`
+                })
               })
             : null
         ]
       }),
+      clashes.length > 0 &&
+        jsxs('div', {
+          'data-banner': 'clashes',
+          style: {
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '6px 8px',
+            borderRadius: 4,
+            border: `1px solid ${RED}`,
+            ...text('--ui-text-primary', '0.75rem')
+          },
+          children: [
+            jsx('span', {
+              style: { flex: 1 },
+              children: clashes
+                .map(c => `${c.title} clashes with ${c.with} · ${dayLabel(dayKey(c.start))} ${hhmm(c.with_start)}`)
+                .join('; ')
+            }),
+            jsx(ReplanButton, { clashes })
+          ]
+        }),
       pending &&
         jsxs('div', {
           style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
@@ -501,15 +672,21 @@ function WeekView({ status }) {
             applied: events.filter(e => e.kind === 'planned'),
             proposed,
             unread,
+            sources,
             height: 460
           }),
       pending && jsx(Unscheduled, { plan: pending }),
       !events.length && !proposed.length && !data.isLoading &&
         jsx('div', {
           style: text('--ui-text-tertiary', '0.75rem'),
-          children: calendars.length
+          children: calendarsRead.length
             ? 'Nothing on this week.'
-            : 'No calendar read yet. Ask Hermes to read your calendar, or to plan something.'
+            : 'No calendar pulled. Ask Hermes to pull your calendar, or tell it when you are busy.'
+        }),
+      status?.local_calendar &&
+        jsx('span', {
+          style: text('--ui-text-quaternary', '0.65rem'),
+          children: `The planner's calendar: ${status.local_calendar}`
         })
     ]
   })
@@ -524,9 +701,7 @@ function PlannerPage() {
     mutationFn: () => rest('/optimize', { method: 'POST', body: {}, timeoutMs: 180_000 }),
     onSuccess: result => {
       client.invalidateQueries({ queryKey: [ID] })
-      if (NEEDS_AGENT.has(result?.code)) {
-        askHermes('Read my calendars and plan my planner inbox')
-      } else if (!result?.ok) {
+      if (!result?.ok) {
         host.notify({ kind: 'error', message: `Planner: ${result?.error}` })
       }
     }
@@ -602,7 +777,6 @@ function PlannerPage() {
             ]
           }),
           jsx('span', { style: { flex: 1 } }),
-          jsx(CalendarsBadge, { status: status.data }),
           status.data?.timezone && jsx('span', { style: text('--ui-text-quaternary', '0.7rem'), children: status.data.timezone }),
           jsx(Button, {
             size: 'xs',
@@ -615,33 +789,6 @@ function PlannerPage() {
       }),
       body()
     ]
-  })
-}
-
-/** Which calendars plans go around, when each was read, and planned events not there yet. */
-function CalendarsBadge({ status }) {
-  if (!status?.ok) {
-    return null
-  }
-  const calendars = status.calendars || []
-  if (!calendars.length) {
-    return jsx(Tip, {
-      label: 'Plans only avoid busy time you tell Hermes about. Ask Hermes to read your calendar before planning.',
-      children: jsx(Badge, { variant: 'warn', children: 'No calendar read' })
-    })
-  }
-  const missing = status.not_on_calendar_yet || []
-  const lines = [
-    ...calendars.map(c => `${c.source}: read ${c.read_at.slice(5, 16)}`),
-    status.publish_to ? `Planned blocks go to “${status.publish_to}”.` : 'No calendar chosen for planned blocks yet.',
-    ...(missing.length ? [`${missing.length} planned event(s) not on the calendar yet.`] : [])
-  ]
-  return jsx(Tip, {
-    label: lines.join('\n'),
-    children: jsx(Badge, {
-      variant: missing.length ? 'warn' : 'muted',
-      children: `${calendars.length} calendar${calendars.length === 1 ? '' : 's'}${missing.length ? ` · ${missing.length} to add` : ''}`
-    })
   })
 }
 
@@ -705,10 +852,6 @@ export default {
           run: () =>
             rest('/optimize', { method: 'POST', body: {}, timeoutMs: 180_000 }).then(result => {
               refresh()
-              if (NEEDS_AGENT.has(result?.code)) {
-                askHermes('Read my calendars and plan my planner inbox')
-                return
-              }
               host.notify(
                 result?.ok
                   ? { kind: 'success', message: `Planner: proposal ${result.score}` }

@@ -35,7 +35,7 @@ const monday = (() => {
   return day(-((d.getDay() + 6) % 7))
 })()
 const weekdays = Object.fromEntries(['mon', 'tue', 'wed', 'thu', 'fri'].map(k => [k, [{ start: '09:00', end: '18:00' }]]))
-const status = calendars => ({
+const status = (calendars, push = null) => ({
   ok: true,
   ready: true,
   problems: [],
@@ -43,8 +43,10 @@ const status = calendars => ({
   timezone: 'Europe/Rome',
   availability: weekdays,
   calendars,
-  publish_to: null,
-  not_on_calendar_yet: []
+  clashes: [],
+  publish_to: push?.calendar ?? null,
+  push,
+  local_calendar: '/home/u/.hermes/plugin-data/solverforge-planner/exports/planner.ics'
 })
 const proposal = (blocks, extra = {}) => ({
   ok: true,
@@ -62,13 +64,14 @@ const proposal = (blocks, extra = {}) => ({
 
 test('the page opens on the week: calendar, applied blocks and a pending proposal', () => {
   setFixture({
-    status: status([{ source: 'google: work', read_at: `${day(0)} 14:40:39`, window: [day(0), day(3)] }]),
+    status: status([{ source: 'google: primary', read_at: `${day(0)} 08:00:00`, window: [day(0), day(3)] }],
+                   { calendar: 'google: primary', create: 1, delete: 0 }),
     proposal: proposal([[day(0), '15:00', '16:00', 'Write report']]),
     weeks: {
       [monday]: {
         ok: true,
         events: [
-          { kind: 'busy', title: 'Standup', start: `${day(0)} 09:00:00`, end: `${day(0)} 09:30:00`, source: 'google: work' },
+          { kind: 'busy', title: 'Standup', start: `${day(0)} 09:00:00`, end: `${day(0)} 09:30:00`, source: 'google: primary' },
           { kind: 'planned', title: 'Call accountant', start: `${day(0)} 11:00:00`, end: `${day(0)} 11:30:00`, task_id: 'a' }
         ]
       }
@@ -78,7 +81,10 @@ test('the page opens on the week: calendar, applied blocks and a pending proposa
   const shown = text(html)
   assert.match(html, /data-on="true">Week</)
   assert.match(shown, /This week/)
-  assert.match(shown, new RegExp(`Calendar read ${day(0).slice(8, 10)}/${day(0).slice(5, 7)} 14:40 Refresh`))
+  assert.match(shown, /google: primary · \d+ (min|h) ago/)
+  assert.match(shown, /1 change\(s\) to push to google: primary/)
+  assert.match(shown, /The planner's calendar: \/home\/u\/.+\/planner\.ics/)
+  assert.doesNotMatch(shown, /Refresh|Pull|Push now/, 'no button for what only Hermes can do')
   assert.match(html, /Standup {2}09:00–09:30 \(busy\)/)
   assert.match(html, /Call accountant {2}11:00–11:30 \(on your plan\)/)
   assert.match(html, /Write report {2}15:00–16:00 \(proposed\)/)
@@ -99,12 +105,46 @@ test('days after the last read are marked unread; past days are not', () => {
   assert.equal((html.match(/· not read/g) || []).length, unreadWorkdays.length)
 })
 
-test('with no calendar read the week says so instead of looking free', () => {
+test('with no calendar pulled the week says so instead of looking free', () => {
   setFixture({ status: status([]), proposal: { ok: false }, weeks: {} })
   const shown = text(render('page'))
-  assert.match(shown, /No calendar read/)
-  assert.match(shown, /No calendar read yet\. Ask Hermes to read your calendar, or to plan something\./)
-  assert.doesNotMatch(shown, /Refresh/)
+  assert.match(shown, /No calendar pulled\. Ask Hermes to pull your calendar, or tell it when you are busy\./)
+  assert.doesNotMatch(shown, /to push to|Refresh|Pull/)
+})
+
+test('overlaps sit side by side: double-bookings in amber, clashes with planned blocks in red', () => {
+  const d = day(1)
+  const read = { source: 'google: primary', read_at: `${day(0)} 00:00:01`, window: [day(0), day(28)] }
+  setFixture({
+    status: status([read, { ...read, source: 'google: Family' }]),
+    proposal: { ok: false },
+    weeks: {
+      [monday]: {
+        ok: true,
+        events: [
+          { kind: 'busy', title: 'Standup', start: `${d} 09:00:00`, end: `${d} 09:30:00`, source: 'google: primary' },
+          { kind: 'busy', title: 'Dentist', start: `${d} 09:15:00`, end: `${d} 10:00:00`, source: 'google: Family' },
+          { kind: 'busy', title: 'Board', start: `${d} 14:00:00`, end: `${d} 15:00:00`, source: 'google: primary' },
+          { kind: 'busy', title: 'Board', start: `${d} 14:00:00`, end: `${d} 15:00:00`, source: 'google: Family' },
+          { kind: 'busy', title: 'Client call', start: `${d} 16:00:00`, end: `${d} 16:30:00`, source: 'google: primary' },
+          { kind: 'planned', title: 'Write report', start: `${d} 16:00:00`, end: `${d} 17:00:00`, task_id: 't' }
+        ],
+        clashes: [{ task_id: 't', title: 'Write report', start: `${d} 16:00:00`, end: `${d} 17:00:00`, with: 'Client call',
+                    with_start: `${d} 16:00:00`, with_end: `${d} 16:30:00`, calendar: 'google: primary' }]
+      }
+    }
+  })
+  const html = render('page')
+  const shown = text(html)
+  if (d >= day(7 - ((new Date().getDay() + 6) % 7))) return // tomorrow is next week: nothing to draw here
+  assert.equal((html.match(/data-mark="double-booked"/g) || []).length, 2, 'standup and dentist overlap')
+  assert.equal((html.match(/data-mark="clash"/g) || []).length, 2, 'the call and the planned block')
+  assert.equal((html.match(/Board {2}14:00–15:00/g) || []).length, 1, 'the same invite on two calendars is one block')
+  assert.match(html, /on google: primary and google: Family/)
+  assert.match(html, /width:calc\(50% - 2px\)/, 'overlapping events share the column')
+  assert.match(shown, /Write report clashes with Client call/)
+  assert.match(shown, /Write report clashes with Client call · .+ Re-plan/)
+  assert.doesNotMatch(shown, /Re-plan with Hermes/)
 })
 
 test('weekend columns appear only when there is something on them', () => {
