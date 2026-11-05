@@ -29,7 +29,7 @@ PYTEST         := uv run --no-project --python $(PYTHON) --with pytest $(PLUGIN_
 
 # ============== Phony Targets ==============
 .PHONY: banner help setup engine test test-engine test-plugin test-desktop lint fmt fmt-check clippy \
-        validate check dist dist-all install-dev uninstall-dev version clean
+        validate check dist dist-all images install-dev uninstall-dev version clean
 
 .DEFAULT_GOAL := help
 
@@ -58,6 +58,8 @@ help: banner
 	@printf "  $(ARROW) $(BOLD)lint$(RESET)          rustfmt and clippy\n"
 	@printf "  $(ARROW) $(BOLD)fmt$(RESET)           Format the engine\n"
 	@printf "  $(ARROW) $(BOLD)validate$(RESET)      hermes plugins validate + doctor (catalog gate)\n\n"
+	@printf "$(CYAN)$(BOLD)Docs$(RESET)\n"
+	@printf "  $(ARROW) $(BOLD)images$(RESET)        Render the banner and architecture diagram from their HTML (Chromium)\n\n"
 	@printf "$(CYAN)$(BOLD)Release$(RESET)\n"
 	@printf "  $(ARROW) $(BOLD)dist$(RESET)          Cross-build one release binary: TARGET=<triple>\n"
 	@printf "  $(ARROW) $(BOLD)dist-all$(RESET)      Cross-build every release target into dist/\n"
@@ -182,3 +184,16 @@ clean:
 	@rm -rf dist .pytest_cache
 	@find . -name __pycache__ -type d -prune -exec rm -rf {} +
 	@printf "$(GREEN)$(CHECK) Clean$(RESET)\n"
+
+# ============== Docs ==============
+CHROMIUM ?= chromium
+SHOT     := $(CHROMIUM) --headless=new --no-sandbox --hide-scrollbars --virtual-time-budget=2000
+
+images: banner
+	@printf "$(PROGRESS) $(BOLD)Rendering docs images...$(RESET)\n"
+	@$(SHOT) --window-size=1200,600 --screenshot="$(CURDIR)/docs/banner.png" \
+		"file://$(CURDIR)/docs/assets/banner/banner.html" 2>/dev/null && \
+	$(SHOT) --force-device-scale-factor=2 --window-size=1600,1000 --screenshot="$(CURDIR)/docs/architecture.png" \
+		"file://$(CURDIR)/docs/assets/architecture/architecture.html" 2>/dev/null && \
+		printf "$(GREEN)$(CHECK) docs/banner.png, docs/architecture.png$(RESET)\n" || \
+		{ printf "$(RED)$(CROSS) Rendering failed (set CHROMIUM=<path>)$(RESET)\n"; exit 1; }

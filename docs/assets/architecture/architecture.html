@@ -1,0 +1,199 @@
+<!doctype html>
+<!-- Architecture of the plugin, drawn from __init__.py, tools.py, store.py, engine_bin.py,
+     desktop/plugin.js and dashboard/plugin_api.py. Render: make images -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; width: 1600px; height: 1000px; overflow: hidden; background: #04140c; }
+  svg { display: block; }
+  .kicker { font: 500 17px "Fira Code"; letter-spacing: 0.14em; fill: #4ade80; }
+  .title { font: 700 40px "Fira Sans"; fill: #ecfdf5; }
+  .sub { font: 400 19px "Fira Sans"; fill: #bbf7d0; }
+  .lane { fill: rgba(34, 197, 94, 0.035); stroke: rgba(74, 222, 128, 0.28); stroke-dasharray: 6 6; }
+  .lanelabel { font: 500 15px "Fira Code"; letter-spacing: 0.12em; fill: #4ade80; }
+  .node { fill: #072417; stroke: #22c55e; stroke-width: 1.5; }
+  .engine { fill: #0b3320; stroke: #4ade80; stroke-width: 2.5; }
+  .gate { fill: #2a1d05; stroke: #fbbf24; stroke-width: 2; }
+  .ext { fill: #0a1a14; stroke: #64748b; stroke-width: 1.5; stroke-dasharray: 5 4; }
+  .h { font: 600 19px "Fira Sans"; fill: #ecfdf5; }
+  .t { font: 400 14.5px "Fira Sans"; fill: #a7f3d0; }
+  .m { font: 400 13.5px "Fira Code"; fill: #a7f3d0; }
+  .gt { font: 400 14.5px "Fira Sans"; fill: #fde68a; }
+  .xt { font: 400 14.5px "Fira Sans"; fill: #cbd5e1; }
+  .edge { stroke: #4ade80; stroke-width: 2; fill: none; }
+  .gedge { stroke: #fbbf24; stroke-width: 2; fill: none; }
+  .xedge { stroke: #94a3b8; stroke-width: 2; fill: none; stroke-dasharray: 6 5; }
+  .el { font: 400 13.5px "Fira Code"; fill: #86efac; }
+  .gel { font: 400 13.5px "Fira Code"; fill: #fcd34d; }
+  .xel { font: 400 13.5px "Fira Code"; fill: #cbd5e1; }
+  .badge { fill: #4ade80; }
+  .bn { font: 700 15px "Fira Code"; fill: #04140c; }
+  .step { font: 600 16px "Fira Sans"; fill: #ecfdf5; }
+  .stept { font: 400 14px "Fira Sans"; fill: #a7f3d0; }
+</style>
+</head>
+<body>
+<svg width="1600" height="1000" viewBox="0 0 1600 1000" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#4ade80"/>
+    </marker>
+    <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#fbbf24"/>
+    </marker>
+    <marker id="ax" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/>
+    </marker>
+  </defs>
+
+  <!-- Header -->
+  <text class="kicker" x="40" y="58">ARCHITECTURE</text>
+  <text class="title" x="40" y="102">SolverForge Planner for Hermes</text>
+  <text class="sub" x="40" y="132">The engine decides where tasks go. The plugin keeps the state. Hermes talks to you and your calendar.</text>
+
+  <!-- Lanes -->
+  <rect class="lane" x="40" y="160" width="260" height="560" rx="10"/>
+  <text class="lanelabel" x="60" y="188">YOU</text>
+  <rect class="lane" x="330" y="160" width="400" height="560" rx="10"/>
+  <text class="lanelabel" x="350" y="188">HERMES</text>
+  <rect class="lane" x="760" y="160" width="410" height="560" rx="10"/>
+  <text class="lanelabel" x="780" y="188">PLUGIN · PYTHON</text>
+  <rect class="lane" x="1200" y="160" width="360" height="560" rx="10"/>
+  <text class="lanelabel" x="1220" y="188">ENGINE · RUST</text>
+
+  <!-- YOU -->
+  <rect class="node" x="60" y="210" width="220" height="80" rx="8"/>
+  <text class="h" x="76" y="240">Chat</text>
+  <text class="t" x="76" y="266">"Plan my week around</text>
+  <text class="t" x="76" y="284">my calendar."</text>
+
+  <rect class="node" x="60" y="560" width="220" height="80" rx="8"/>
+  <text class="h" x="76" y="590">Desktop Planner page</text>
+  <text class="t" x="76" y="616">Week view, plan card,</text>
+  <text class="t" x="76" y="634">Solve now, Apply</text>
+
+  <!-- HERMES -->
+  <rect class="node" x="360" y="210" width="340" height="80" rx="8"/>
+  <text class="h" x="376" y="240">Agent</text>
+  <text class="t" x="376" y="266">Follows the planner skill and explains</text>
+  <text class="t" x="376" y="284">the engine's plan back to you</text>
+
+  <rect class="gate" x="470" y="340" width="230" height="84" rx="8"/>
+  <text class="h" x="486" y="370">Approval prompt</text>
+  <text class="gt" x="486" y="394">pre_tool_call hook on</text>
+  <text class="gt" x="486" y="414">apply and unschedule</text>
+
+  <rect class="node" x="360" y="470" width="340" height="80" rx="8"/>
+  <text class="h" x="376" y="500">Your calendar tool</text>
+  <text class="t" x="376" y="526">google-workspace skill or microsoft365</text>
+  <text class="t" x="376" y="544">plugin, with its own login</text>
+
+  <!-- PLUGIN -->
+  <rect class="node" x="790" y="210" width="350" height="80" rx="8"/>
+  <text class="h" x="806" y="240">15 planner_* tools</text>
+  <text class="t" x="806" y="266">tasks, settings, busy time, optimize,</text>
+  <text class="t" x="806" y="284">proposal, apply, push</text>
+
+  <rect class="node" x="790" y="340" width="350" height="84" rx="8"/>
+  <text class="h" x="806" y="370">Planner database</text>
+  <text class="m" x="806" y="394">SQLite: tasks, busy, proposals,</text>
+  <text class="m" x="806" y="414">applied, released, removals</text>
+
+  <rect class="node" x="790" y="450" width="350" height="70" rx="8"/>
+  <text class="h" x="806" y="480">Planner's calendar</text>
+  <text class="m" x="806" y="504">planner.ics · fixed event IDs</text>
+
+  <rect class="node" x="790" y="560" width="350" height="80" rx="8"/>
+  <text class="h" x="806" y="590">Desktop API</text>
+  <text class="m" x="806" y="616">/api/plugins/solverforge-planner</text>
+  <text class="t" x="806" y="634">same database, same engine</text>
+
+  <!-- ENGINE -->
+  <rect class="engine" x="1230" y="210" width="300" height="150" rx="8"/>
+  <text class="h" x="1246" y="240">solverforge-planner solve</text>
+  <text class="t" x="1246" y="266">SolverForge, one process per solve</text>
+  <text class="t" x="1246" y="288">14 rules from Planner123</text>
+  <text class="t" x="1246" y="310">Incremental scoring, checked</text>
+  <text class="t" x="1246" y="330">against full re-evaluation</text>
+  <text class="t" x="1246" y="350">No network, no files</text>
+
+  <rect class="node" x="1230" y="400" width="300" height="120" rx="8"/>
+  <text class="h" x="1246" y="430">Score hard/medium/soft</text>
+  <text class="t" x="1246" y="456">hard: hours, busy time, overlaps,</text>
+  <text class="t" x="1246" y="476">deadlines, earliest starts, order</text>
+  <text class="t" x="1246" y="502">A plan breaking one is refused</text>
+
+  <!-- External -->
+  <rect class="ext" x="360" y="760" width="340" height="80" rx="8"/>
+  <text class="h" x="376" y="790">Your cloud calendar</text>
+  <text class="xt" x="376" y="816">Google Calendar, Outlook / Microsoft 365</text>
+
+  <rect class="ext" x="1230" y="760" width="300" height="80" rx="8"/>
+  <text class="h" x="1246" y="790">GitHub release engine-v0.1.0</text>
+  <text class="xt" x="1246" y="816">built by CI, build attestation</text>
+
+  <!-- Edges -->
+  <path class="edge" d="M280,250 L356,250" marker-end="url(#a)"/>
+
+  <path class="edge" d="M700,236 L786,236" marker-end="url(#a)"/>
+  <path class="edge" d="M790,268 L704,268" marker-end="url(#a)"/>
+
+  <path class="edge" d="M1140,232 L1226,232" marker-end="url(#a)"/>
+  <text class="el" x="1150" y="224">problem</text>
+  <path class="edge" d="M1230,272 L1144,272" marker-end="url(#a)"/>
+  <text class="el" x="1150" y="292">plan</text>
+
+  <path class="edge" d="M965,290 L965,336" marker-end="url(#a)"/>
+  <path class="edge" d="M965,424 L965,446" marker-end="url(#a)"/>
+
+  <path class="gedge" d="M585,290 L585,336" marker-end="url(#ag)"/>
+  <path class="gedge" d="M700,382 L786,382" marker-end="url(#ag)"/>
+  <text class="gel" x="728" y="372">yes</text>
+
+  <path class="edge" d="M400,290 L400,466" marker-end="url(#a)"/>
+
+  <path class="edge" d="M530,554 L530,756" marker-start="url(#a)" marker-end="url(#a)"/>
+  <text class="el" x="542" y="660">pull / push</text>
+
+  <path class="edge" d="M280,600 L786,600" marker-end="url(#a)"/>
+  <path class="edge" d="M1140,600 L1162,600 L1162,382 L1144,382" marker-end="url(#a)"/>
+
+  <path class="edge" d="M1380,360 L1380,396" marker-end="url(#a)"/>
+  <path class="xedge" d="M1545,760 L1545,300 L1534,300" marker-end="url(#ax)"/>
+  <text class="xel" x="1250" y="740">once, on install: SHA-256 pinned</text>
+
+  <!-- Numbered steps on the edges -->
+  <circle class="badge" cx="508" cy="660" r="13"/><text class="bn" x="503" y="665">1</text>
+  <circle class="badge" cx="1185" cy="252" r="13"/><text class="bn" x="1180" y="257">2</text>
+  <circle class="badge" cx="745" cy="404" r="13"/><text class="bn" x="740" y="409">3</text>
+  <circle class="badge" cx="420" cy="378" r="13"/><text class="bn" x="415" y="383">4</text>
+
+  <!-- Steps -->
+  <circle class="badge" cx="56" cy="896" r="13"/><text class="bn" x="51" y="901">1</text>
+  <text class="step" x="80" y="901">Pull</text>
+  <text class="stept" x="80" y="924">Hermes reads your calendar</text>
+  <text class="stept" x="80" y="944">and hands the events over</text>
+
+  <circle class="badge" cx="356" cy="896" r="13"/><text class="bn" x="351" y="901">2</text>
+  <text class="step" x="380" y="901">Plan</text>
+  <text class="stept" x="380" y="924">The engine fits every task</text>
+  <text class="stept" x="380" y="944">around them and scores it</text>
+
+  <circle class="badge" cx="656" cy="896" r="13"/><text class="bn" x="651" y="901">3</text>
+  <text class="step" x="680" y="901">Approve</text>
+  <text class="stept" x="680" y="924">Nothing is written until</text>
+  <text class="stept" x="680" y="944">you say yes</text>
+
+  <circle class="badge" cx="956" cy="896" r="13"/><text class="bn" x="951" y="901">4</text>
+  <text class="step" x="980" y="901">Push</text>
+  <text class="stept" x="980" y="924">The planner lists what to add, move</text>
+  <text class="stept" x="980" y="944">or delete; Hermes carries it out</text>
+
+  <circle class="badge" cx="1316" cy="896" r="13"/><text class="bn" x="1310" y="901">5</text>
+  <text class="step" x="1340" y="901">Confirm</text>
+  <text class="stept" x="1340" y="924">The next pull checks it landed,</text>
+  <text class="stept" x="1340" y="944">once, with the planner's own IDs</text>
+</svg>
+</body>
+</html>

@@ -189,16 +189,7 @@ Engine builds: Linux (x86_64, arm64), macOS (Apple silicon, Intel), Windows (x86
 
 ## How it works
 
-```
-your cloud calendar ◄─ pull / push ─► your calendar tool ◄─► Hermes
-you ──► Hermes ──► planner_* tools ──► planner database ──► problem (JSON)
-                     │                                          │
-                     │                  solverforge-planner solve (Rust, SolverForge)
-                     │                                          │
-                     └─ approval prompt ──► apply ◄────── proposal (JSON)
-                                              └──► planner's calendar (database + planner.ics)
-Desktop ──► /api/plugins/solverforge-planner ──► same database and engine
-```
+![Architecture: you, Hermes, the Python plugin and the Rust engine, with the pull, plan, approve, push and confirm steps](docs/architecture.png)
 
 - [`engine/`](engine) is a Rust crate: a stateless SolverForge planning model. Its planning domain
   and all fourteen scoring rules come from [Planner123](https://github.com/blackopsrepl/Planner123)
