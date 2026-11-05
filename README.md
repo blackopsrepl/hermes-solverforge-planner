@@ -99,7 +99,7 @@ gives you an `.ics` file; importing it again updates the same events instead of 
 
 **In the Desktop app:**
 
-![The Planner page: the latest proposal on a day grid, busy time muted, planned blocks highlighted](docs/screenshots/planner-page.png)
+![The Planner page: the week with planned blocks, the pulled Google calendar and the changes waiting to be pushed](docs/screenshots/planner-page.png)
 
 - the plan card in the chat, with the score, your busy time, the proposed blocks and **Apply**;
 - a **Planner** page that opens on your week: every pulled calendar in its own colour, with how old
@@ -114,7 +114,7 @@ gives you an `.ics` file; importing it again updates the same events instead of 
 
 **Apply** asks first, listing every block:
 
-![The Apply confirmation listing each block it will put on the calendar](docs/screenshots/apply-confirm.png)
+![The Apply confirmation listing each block it will put on the planner's calendar](docs/screenshots/apply-confirm.png)
 
 **In any chat**, including messaging apps, `/planner` gives you the same controls:
 
