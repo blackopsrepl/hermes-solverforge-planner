@@ -2,11 +2,14 @@ name: release
 
 # Builds the engine for every supported platform from one Linux runner, attests
 # each binary's build provenance, and publishes them with SHA256SUMS on the
-# GitHub release for the tag. The plugin pins those checksums in engine_bin.py.
+# GitHub release for the tag. Engine releases have their own tags
+# (engine-vX.Y.Z) because the plugin pins their checksums in engine_bin.py,
+# which can only happen after the binaries exist; plugin releases (vX.Y.Z)
+# follow and contain those pins.
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["engine-v*"]
 
 permissions:
   contents: read
@@ -30,11 +33,10 @@ jobs:
         env:
           SOLVERFORGE_PLANNER_BIN: ${{ github.workspace }}/engine/target/release/solverforge-planner
         run: uv run --no-project --python 3.12 --with pytest python -m pytest -q
-      - name: Tag matches the engine and plugin versions
+      - name: Tag matches the engine version
         run: |
-          tag="${GITHUB_REF_NAME#v}"
+          tag="${GITHUB_REF_NAME#engine-v}"
           grep -q "^version = \"$tag\"" engine/Cargo.toml
-          grep -q "^version: $tag$" plugin.yaml
           grep -q "^ENGINE_VERSION = \"$tag\"" engine_bin.py
 
   build:
@@ -93,4 +95,15 @@ jobs:
         with:
           files: dist/*
           fail_on_unmatched_files: true
-          generate_release_notes: true
+          name: Engine ${{ github.ref_name }}
+          body: |
+            SolverForge Planner engine binaries for Linux (x86_64, arm64; static musl), macOS
+            (Apple silicon, Intel) and Windows (x86_64), built from `engine/` at this tag.
+
+            You do not need to download these by hand: `hermes solverforge-planner install`
+            fetches the one for your platform and checks it against the SHA-256 pinned in the
+            plugin. Each binary carries a build attestation:
+
+            ```sh
+            gh attestation verify solverforge-planner-<target> --repo ${{ github.repository }}
+            ```

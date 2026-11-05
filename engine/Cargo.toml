@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
 description = "Stateless SolverForge task-scheduling engine: JSON problem in, proposal out"
-license = "MIT"
+license = "Apache-2.0"
 repository = "https://github.com/blackopsrepl/hermes-solverforge-planner"
 publish = false
 

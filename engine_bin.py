@@ -24,7 +24,7 @@ from typing import Any, Callable
 
 ENGINE_VERSION = "0.1.0"
 REPO = "blackopsrepl/hermes-solverforge-planner"
-RELEASE_URL = f"https://github.com/{REPO}/releases/download/v{ENGINE_VERSION}"
+RELEASE_URL = f"https://github.com/{REPO}/releases/download/engine-v{ENGINE_VERSION}"
 # Filled from the release's SHA256SUMS when the release is cut; an empty
 # entry means that platform has no published binary for this version.
 CHECKSUMS: dict[str, str] = {

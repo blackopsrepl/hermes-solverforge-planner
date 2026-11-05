@@ -8,7 +8,7 @@ description: >
   and focus hours, and proves every hard rule is kept. Hermes proposes, you
   approve, and the plan lands on your calendar as an .ics you can import.
 author: blackopsrepl
-license: MIT
+license: Apache-2.0
 homepage: https://github.com/blackopsrepl/hermes-solverforge-planner
 requires_hermes: ">=0.22.2"
 tags: [planning, calendar, scheduling, solver, solverforge, productivity]
