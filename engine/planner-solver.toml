@@ -1,0 +1,40 @@
+# SolverForge policy for the calendar planner. All search policy lives here;
+# the Rust model only declares facts, the planning variable, and constraints.
+#
+# `start_idx` is one scalar index over the whole horizon grid. Both phases must
+# see every declared start: a value cap would make availability further out
+# unreachable and leave feasible tasks unassigned, so no cap is set.
+#
+# Construction weighs every placement against leaving the task unassigned
+# (`preserve_unassigned`). Forcing an assignment whenever a candidate exists
+# places tasks that cannot fit on top of each other, and when local search
+# cannot repair that within the budget the best solution is the empty one:
+# an inbox larger than the free time would then schedule nothing at all.
+
+random_seed = 1
+
+[termination]
+seconds_spent_limit = 5
+
+[[phases]]
+type = "construction_heuristic"
+construction_heuristic_type = "cheapest_insertion"
+entity_class = "SolverTask"
+variable_name = "start_idx"
+construction_obligation = "preserve_unassigned"
+
+[[phases]]
+type = "local_search"
+
+[phases.acceptor]
+type = "late_acceptance"
+late_acceptance_size = 400
+
+[phases.forager]
+type = "accepted_count"
+limit = 4
+
+[phases.move_selector]
+type = "change_move_selector"
+entity_class = "SolverTask"
+variable_name = "start_idx"
