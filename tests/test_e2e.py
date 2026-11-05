@@ -143,6 +143,10 @@ def test_plan_apply_and_replan(planner):
     week = call(planner, "planner_week", start=str(date.today()), days=14)
     assert sum(e["kind"] == "planned" for e in week["events"]) == 3
 
+    # Every applied task says when its block is; an inbox task has none.
+    listed = {t["id"]: t for t in call(planner, "planner_inbox", state="all")["tasks"]}
+    assert listed[w["deck"]["id"]]["block"] == {"start": deck["start"], "end": deck["end"]}
+
     # A new task is planned around the applied blocks, after its applied predecessor.
     late = call(planner, "planner_task_create", title="Ship deck", duration_minutes=30)["task"]
     call(planner, "planner_depend", action="add", before=w["deck"]["id"], after=late["id"])

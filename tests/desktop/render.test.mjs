@@ -13,7 +13,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 const here = dirname(fileURLToPath(import.meta.url))
 mkdirSync(join(here, '.build'), { recursive: true })
 cpSync(join(here, '../../desktop/plugin.js'), join(here, '.build/plugin.mjs'))
-const { default: plugin } = await import('./.build/plugin.mjs')
+const { default: plugin, TasksView } = await import('./.build/plugin.mjs')
 
 const items = []
 plugin.register({ rest: async () => ({}), onEvent() {}, registerMany: xs => items.push(...xs), register: x => items.push(x) })
@@ -166,4 +166,41 @@ test('the chat plan card renders the proposal it names', () => {
   const item = items.find(i => i.id === 'plan-card')
   item.props = { attrs: { proposal: '808f1223-73c5-4a48-bade-076a05225e07' } }
   assert.match(text(render('plan-card')), /Plan proposal 0hard\/0medium\/0soft 1 placed/)
+})
+
+test('the tasks tab sorts tasks into to plan, on your calendar and past, and says how old the calendar is', () => {
+  const task = (id, title, extra = {}) => ({
+    id, title, state: 'inbox', duration_minutes: 60, priority: 'normal', cognitive_load: 'medium',
+    earliest_at: null, deadline_kind: 'none', deadline_at: null, ...extra
+  })
+  const inbox = {
+    ok: true,
+    tasks: [
+      task('pr', 'Review PR', { duration_minutes: 90 }),
+      task('post', 'Launch post', { deadline_kind: 'hard', deadline_at: `${day(4)} 18:00:00`, cognitive_load: 'high' }),
+      task('deck', 'Q4 deck', { state: 'applied', duration_minutes: 240,
+                                block: { start: `${day(1)} 09:00:00`, end: `${day(1)} 13:00:00` } }),
+      task('old', 'Old call', { state: 'applied', duration_minutes: 30,
+                                block: { start: `${day(-2)} 10:00:00`, end: `${day(-2)} 10:30:00` } })
+    ],
+    order_rules: [{ before: 'Q4 deck', after: 'Review PR', before_id: 'deck', after_id: 'pr' }]
+  }
+  const st = status([{ source: 'google: primary', read_at: `${day(0)} 00:00:00`, window: [day(0), day(7)] }])
+  const html = renderToStaticMarkup(h(TasksView, { status: st, inbox }))
+  const section = name => text(html.split(`data-section="${name}"`)[1].replace(/^[^>]*>/, '').split('<section')[0])
+
+  assert.match(section('To plan'), /^To plan 2 /)
+  assert.match(section('To plan'), /1 h 30 min Review PR after Q4 deck/)
+  assert.match(section('To plan'), /1 h Launch post deep work · due \S+ \S+ \d+ 18:00/)
+  assert.match(section('On your calendar'), /^On your calendar 1 google: primary · pulled .+ Tomorrow /)
+  assert.match(section('On your calendar'), /Tomorrow 09:00–13:00 Q4 deck 4 h$/)
+  assert.doesNotMatch(section('On your calendar'), /Old call/)
+  // Past blocks are folded away behind their count.
+  assert.match(section('Past'), /▸ Past · 1/)
+  assert.doesNotMatch(section('Past'), /Old call/)
+})
+
+test('with no tasks the tab says how to start', () => {
+  const html = renderToStaticMarkup(h(TasksView, { status: status([]), inbox: { ok: true, tasks: [], order_rules: [] } }))
+  assert.match(text(html), /No tasks yet ?Tell Hermes what you need to get done this week\./)
 })

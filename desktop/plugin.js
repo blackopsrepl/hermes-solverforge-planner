@@ -701,6 +701,170 @@ function WeekView({ status }) {
   })
 }
 
+const durationLabel = m => (m < 60 ? `${m} min` : m % 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m / 60} h`)
+const whenLabel = stamp => `${dayLabel(dayKey(stamp))} ${hhmm(stamp)}`
+const nowStamp = () => {
+  const now = new Date()
+  return `${isoDay(now)} ${now.toTimeString().slice(0, 8)}`
+}
+
+function Section({ title, count, note, children, empty }) {
+  return jsxs('section', {
+    'data-section': title,
+    style: { display: 'flex', flexDirection: 'column', gap: 2 },
+    children: [
+      jsxs('div', {
+        style: { display: 'flex', alignItems: 'baseline', gap: 8, padding: '0 8px 4px' },
+        children: [
+          jsx('span', {
+            style: { ...text('--ui-text-secondary', '0.7rem'), fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase' },
+            children: title
+          }),
+          jsx('span', { style: text('--ui-text-quaternary', '0.7rem'), children: count }),
+          note && jsx('span', { style: { ...text('--ui-text-quaternary', '0.7rem'), marginLeft: 'auto' }, children: note })
+        ]
+      }),
+      count ? children : jsx('div', { style: { ...text('--ui-text-tertiary', '0.75rem'), padding: '2px 8px 6px' }, children: empty })
+    ]
+  })
+}
+
+function TaskRow({ when, title, meta, muted, accent }) {
+  return jsxs('div', {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: '7.5rem 1fr',
+      gap: 12,
+      alignItems: 'baseline',
+      padding: '6px 8px',
+      borderRadius: 4,
+      borderLeft: `2px solid ${accent ? 'var(--ui-accent)' : 'transparent'}`,
+      opacity: muted ? 0.6 : 1
+    },
+    children: [
+      jsx('span', { style: { ...text('--ui-text-tertiary', '0.72rem'), fontVariantNumeric: 'tabular-nums' }, children: when }),
+      jsxs('span', {
+        style: { display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 },
+        children: [
+          jsx('span', { style: { ...text('--ui-text-primary', '0.8rem'), }, children: title }),
+          meta && jsx('span', { style: text('--ui-text-tertiary', '0.7rem'), children: meta })
+        ]
+      })
+    ]
+  })
+}
+
+/**
+ * The tasks, by where they stand: waiting for a plan, on the planner's calendar, or past (the block
+ * has ended; whether the work got done is not the planner's to say). Events deleted on a cloud
+ * calendar reach the planner at Hermes's next pull, so the calendar section says how old its copy is.
+ */
+export function TasksView({ status, inbox }) {
+  const [showPast, setShowPast] = useState(false)
+  const tasks = inbox?.tasks || []
+  const after = new Map()
+  for (const rule of inbox?.order_rules || []) {
+    after.set(rule.after_id, [...(after.get(rule.after_id) || []), rule.before])
+  }
+  const stamp = nowStamp()
+  const waiting = tasks.filter(t => t.state === 'inbox')
+  const placed = tasks.filter(t => t.state === 'applied' && t.block).sort((a, b) => a.block.start.localeCompare(b.block.start))
+  const upcoming = placed.filter(t => t.block.end > stamp)
+  const past = placed.filter(t => t.block.end <= stamp).reverse()
+  const calendars = status?.calendars || []
+  const pulled = calendars.length ? calendars.map(c => `${c.source} · pulled ${ageOf(c.read_at)}`).join('  ') : null
+  const today = isoDay(new Date())
+  const tomorrow = (() => {
+    const d = new Date()
+    d.setDate(d.getDate() + 1)
+    return isoDay(d)
+  })()
+  const dayName = key => (key === today ? 'Today' : key === tomorrow ? 'Tomorrow' : dayLabel(key))
+  const byDay = [...new Set(upcoming.map(t => dayKey(t.block.start)))]
+
+  // What still shapes a task's placement. Once placed, only its length, load and deadline matter.
+  const details = (t, placed) =>
+    [
+      placed && durationLabel(t.duration_minutes),
+      t.priority === 'high' && 'high priority',
+      t.priority === 'low' && 'low priority',
+      t.cognitive_load === 'high' && 'deep work',
+      t.deadline_at && `${t.deadline_kind === 'hard' ? 'due' : 'ideally by'} ${whenLabel(t.deadline_at)}`,
+      !placed && t.earliest_at && `not before ${whenLabel(t.earliest_at)}`,
+      !placed && after.has(t.id) && `after ${after.get(t.id).join(', ')}`
+    ]
+      .filter(Boolean)
+      .join(' · ')
+
+  if (!tasks.length) {
+    return jsx(EmptyState, { title: 'No tasks yet', description: 'Tell Hermes what you need to get done this week.' })
+  }
+
+  return jsxs('div', {
+    style: { display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 760 },
+    children: [
+      jsx(Section, {
+        title: 'To plan',
+        count: waiting.length,
+        empty: 'Nothing waiting. New tasks land here until a plan places them.',
+        children: waiting.map(t => jsx(TaskRow, { when: durationLabel(t.duration_minutes), title: t.title, meta: details(t, false) }, t.id))
+      }),
+      jsx(Section, {
+        title: 'On your calendar',
+        count: upcoming.length,
+        note: pulled,
+        empty: 'No upcoming blocks. Apply a plan to put tasks here.',
+        children: byDay.map(key =>
+          jsxs(
+            'div',
+            {
+              style: { display: 'flex', flexDirection: 'column', gap: 2 },
+              children: [
+                jsx('div', {
+                  style: { ...text(key === today ? '--ui-accent' : '--ui-text-secondary', '0.72rem'), fontWeight: 500, padding: '6px 8px 0' },
+                  children: dayName(key)
+                }),
+                ...upcoming
+                  .filter(t => dayKey(t.block.start) === key)
+                  .map(t =>
+                    jsx(
+                      TaskRow,
+                      {
+                        when: `${hhmm(t.block.start)}–${hhmm(t.block.end)}`,
+                        title: t.title,
+                        meta: details(t, true),
+                        accent: t.block.start <= stamp
+                      },
+                      t.id
+                    )
+                  )
+              ]
+            },
+            key
+          )
+        )
+      }),
+      past.length > 0 &&
+        jsxs('section', {
+          'data-section': 'Past',
+          style: { display: 'flex', flexDirection: 'column', gap: 2 },
+          children: [
+            jsx(Button, {
+              size: 'xs',
+              variant: 'ghost',
+              onClick: () => setShowPast(!showPast),
+              children: `${showPast ? '▾' : '▸'} Past · ${past.length}`
+            }),
+            showPast &&
+              past.map(t =>
+                jsx(TaskRow, { when: dayLabel(dayKey(t.block.start)), title: t.title, meta: `${hhmm(t.block.start)}–${hhmm(t.block.end)}`, muted: true }, t.id)
+              )
+          ]
+        })
+    ]
+  })
+}
+
 function PlannerPage() {
   const [tab, setTab] = useState('week')
   const client = useQueryClient()
@@ -736,36 +900,7 @@ function PlannerPage() {
       })
     }
     if (tab === 'inbox') {
-      const tasks = inbox.data?.tasks || []
-      return tasks.length
-        ? jsx('div', {
-            style: { display: 'flex', flexDirection: 'column', gap: 4 },
-            children: tasks.map(t =>
-              jsxs(
-                'div',
-                {
-                  style: { display: 'flex', gap: 8, alignItems: 'baseline' },
-                  children: [
-                    jsx(Badge, { variant: t.state === 'applied' ? 'muted' : 'outline', size: 'xs', children: t.state }),
-                    jsx('span', { style: text('--ui-text-primary', '0.8rem'), children: t.title }),
-                    jsx('span', {
-                      style: text('--ui-text-tertiary', '0.7rem'),
-                      children: [
-                        `${t.duration_minutes} min`,
-                        t.priority,
-                        t.cognitive_load && `${t.cognitive_load} load`,
-                        t.deadline_at && `${t.deadline_kind} deadline ${t.deadline_at.slice(0, 16)}`
-                      ]
-                        .filter(Boolean)
-                        .join(' · ')
-                    })
-                  ]
-                },
-                t.id
-              )
-            )
-          })
-        : jsx(EmptyState, { title: 'No tasks', description: 'Ask Hermes to plan something.' })
+      return jsx(TasksView, { status: status.data, inbox: inbox.data })
     }
     return jsx(WeekView, { status: status.data })
   }
@@ -808,8 +943,7 @@ function StatusChip() {
     return null
   }
   const pending = plan.can_apply && !plan.applied_at && plan.scheduled.length
-  const now = new Date()
-  const stamp = `${now.toISOString().slice(0, 10)} ${now.toTimeString().slice(0, 5)}`
+  const stamp = nowStamp()
   const next = plan.applied_at ? plan.scheduled.find(b => b.end > stamp) : null
   const label = pending ? `▦ ${plan.scheduled.length} to approve` : next ? `▦ ${hhmm(next.start)} ${next.title}` : null
   if (!label) {

@@ -273,7 +273,10 @@ class Planner:
         keep = ("id", "title", "state", "duration_minutes", "priority", "cognitive_load", "earliest_at",
                 "deadline_kind", "deadline_at")
         titles = {t["id"]: t["title"] for t in self.store.tasks("all")}
-        return _ok(tasks=[{k: t[k] for k in keep} for t in self.store.tasks(state)],
+        # An applied task carries its block, so a list can say when it happens.
+        blocks = {a["task_id"]: {"start": a["start"], "end": a["end"]} for a in self.store.applied()}
+        return _ok(tasks=[{**{k: t[k] for k in keep}, **({"block": blocks[t["id"]]} if t["id"] in blocks else {})}
+                          for t in self.store.tasks(state)],
                    order_rules=[{"before": titles.get(b, b), "after": titles.get(a, a), "before_id": b,
                                  "after_id": a} for b, a in self.store.dependencies()])
 
