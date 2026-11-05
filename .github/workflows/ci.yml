@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95
+        with:
+          components: clippy, rustfmt
+      - uses: astral-sh/setup-uv@v6
+      - name: Engine checks
+        working-directory: engine
+        run: |
+          cargo fmt --check
+          cargo clippy --release --all-targets --locked -- -D warnings
+          cargo test --release --locked
+      - name: Plugin tests against the engine just built
+        env:
+          SOLVERFORGE_PLANNER_BIN: ${{ github.workspace }}/engine/target/release/solverforge-planner
+        run: uv run --no-project --python 3.12 --with pytest python -m pytest -q

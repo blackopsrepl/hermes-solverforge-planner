@@ -1,0 +1,41 @@
+manifest_version: 2
+name: solverforge-planner
+version: 0.1.0
+label: SolverForge Planner
+description: >
+  Constraint-solved planning for Hermes. A SolverForge engine places your
+  tasks into free working time around your meetings, deadlines, task order
+  and focus hours, and proves every hard rule is kept. Hermes proposes, you
+  approve, and the plan lands on your calendar as an .ics you can import.
+author: blackopsrepl
+license: MIT
+homepage: https://github.com/blackopsrepl/hermes-solverforge-planner
+requires_hermes: ">=0.22.2"
+tags: [planning, calendar, scheduling, solver, solverforge, productivity]
+provides_tools:
+  - planner_status
+  - planner_inbox
+  - planner_task_create
+  - planner_task_update
+  - planner_task_delete
+  - planner_task_unschedule
+  - planner_depend
+  - planner_settings
+  - planner_busy_set
+  - planner_busy_from_ics
+  - planner_week
+  - planner_optimize
+  - planner_proposal
+  - planner_apply
+provides_hooks:
+  - pre_tool_call
+config_schema:
+  binary:
+    type: str
+    default: ""
+    label: Engine binary path
+    description: Leave empty to use the engine installed by `hermes solverforge-planner install`.
+  solve_timeout:
+    type: int
+    default: 120
+    label: Solve timeout (seconds)

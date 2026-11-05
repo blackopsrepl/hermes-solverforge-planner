@@ -1,0 +1,96 @@
+name: release
+
+# Builds the engine for every supported platform from one Linux runner, attests
+# each binary's build provenance, and publishes them with SHA256SUMS on the
+# GitHub release for the tag. The plugin pins those checksums in engine_bin.py.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95
+        with:
+          components: clippy, rustfmt
+      - uses: astral-sh/setup-uv@v6
+      - name: Engine checks
+        working-directory: engine
+        run: |
+          cargo fmt --check
+          cargo clippy --release --all-targets --locked -- -D warnings
+          cargo test --release --locked
+      - name: Plugin tests against the engine just built
+        env:
+          SOLVERFORGE_PLANNER_BIN: ${{ github.workspace }}/engine/target/release/solverforge-planner
+        run: uv run --no-project --python 3.12 --with pytest python -m pytest -q
+      - name: Tag matches the engine and plugin versions
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          grep -q "^version = \"$tag\"" engine/Cargo.toml
+          grep -q "^version: $tag$" plugin.yaml
+          grep -q "^ENGINE_VERSION = \"$tag\"" engine_bin.py
+
+  build:
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: true
+      matrix:
+        target:
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+          - x86_64-pc-windows-gnu
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install zig and cargo-zigbuild
+        run: |
+          pip install ziglang==0.17.0
+          cargo install --locked cargo-zigbuild@0.24.1
+      - name: Build
+        run: scripts/build-engine.sh ${{ matrix.target }}
+      - name: Smoke-test the Linux x86_64 binary
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: dist/solverforge-planner-x86_64-unknown-linux-musl --version
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/solverforge-planner-*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-${{ matrix.target }}
+          path: dist/solverforge-planner-*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum solverforge-planner-* | tee SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
