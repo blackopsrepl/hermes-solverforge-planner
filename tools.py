@@ -39,6 +39,43 @@ def _fail(code: str, message: str, **detail: Any) -> str:
     return json.dumps({"ok": False, "code": code, "error": message, **detail}, ensure_ascii=False)
 
 
+def _url_is_safe(url: str) -> bool:
+    """Hermes' own SSRF check: refuses localhost, private networks and cloud metadata addresses."""
+    from tools.url_safety import is_safe_url
+    return is_safe_url(url)
+
+
+def _check_ics_url(url: str) -> None:
+    if urllib.parse.urlparse(url).scheme not in ("https", "http"):
+        raise ValueError("ICS url must be https, http or webcal")
+    if not _url_is_safe(url):
+        raise ValueError("refusing an ICS url that points at a local, private or internal address")
+
+
+class _CheckedRedirects(urllib.request.HTTPRedirectHandler):
+    """Follows a redirect only to a target that passes the same check as the first URL."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _check_ics_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _download_ics(url: str) -> str:
+    """Fetch an iCalendar feed the user named, refusing internal targets before and after redirects."""
+    if url.startswith("webcal://"):
+        url = "https://" + url[len("webcal://"):]
+    _check_ics_url(url)
+    opener = urllib.request.build_opener(_CheckedRedirects)
+    request = urllib.request.Request(url, headers={"User-Agent": "hermes-solverforge-planner"})
+    with opener.open(request, timeout=30) as response:
+        body = response.read(ICS_MAX_BYTES + 1)
+    if len(body) > ICS_MAX_BYTES:
+        raise ValueError("ICS feed is larger than 10 MB")
+    if b"BEGIN:VCALENDAR" not in body[:4096]:
+        raise ValueError("that URL did not return an iCalendar feed")
+    return body.decode("utf-8", errors="replace")
+
+
 class Planner:
     """All planner operations over one store and one engine.
 
@@ -540,10 +577,12 @@ class Planner:
         url, path = (args.get("url") or "").strip(), (args.get("path") or "").strip()
         if bool(url) == bool(path):
             raise ValueError("pass exactly one of url or path")
+        if path and Path(path).suffix.lower() != ".ics":
+            raise ValueError("path must name an iCalendar file ending in .ics")
         tz = self.timezone()
         if not tz:
             raise ValueError("set the planner timezone first")
-        text = self._download_ics(url) if url else Path(path).expanduser().read_text(errors="replace")
+        text = _download_ics(url) if url else Path(path).expanduser().read_text(errors="replace")
         start, end = self._calendar_window()
         known = self.store.known_event_ids()
         events = [b for b in calendars.busy_blocks(text, tz, start, end)
@@ -552,20 +591,6 @@ class Planner:
         self.changed("busy")
         return _ok(source=source, stored=stored, window={"start": str(start), "end": str(end)},
                    next="planner_optimize")
-
-    def _download_ics(self, url: str) -> str:
-        if url.startswith("webcal://"):
-            url = "https://" + url[len("webcal://"):]
-        if urllib.parse.urlparse(url).scheme not in ("https", "http"):
-            raise ValueError("ICS url must be https, http or webcal")
-        request = urllib.request.Request(url, headers={"User-Agent": "hermes-solverforge-planner"})
-        with urllib.request.urlopen(request, timeout=30) as response:
-            body = response.read(ICS_MAX_BYTES + 1)
-        if len(body) > ICS_MAX_BYTES:
-            raise ValueError("ICS feed is larger than 10 MB")
-        if b"BEGIN:VCALENDAR" not in body[:4096]:
-            raise ValueError("that URL did not return an iCalendar feed")
-        return body.decode("utf-8", errors="replace")
 
     def week(self, args: dict) -> str:
         tz = self.timezone()
