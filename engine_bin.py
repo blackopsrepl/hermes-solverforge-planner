@@ -37,6 +37,15 @@ CHECKSUMS: dict[str, str] = {
 MAX_BINARY_BYTES = 64 * 1024 * 1024
 
 
+# The engine needs no network, no files and no configuration, so it runs with only what a
+# process needs to start: no API keys or tokens from Hermes' environment are passed on.
+_ENGINE_ENV_KEYS = ("PATH", "SYSTEMROOT", "LANG")
+
+
+def engine_env() -> dict[str, str]:
+    return {k: os.environ[k] for k in _ENGINE_ENV_KEYS if k in os.environ}
+
+
 class EngineError(Exception):
     """A refusal or failure from the engine, carrying its machine-readable code."""
 
@@ -93,7 +102,8 @@ class Engine:
         if binary is None:
             return None
         try:
-            out = subprocess.run([str(binary), "--version"], capture_output=True, text=True, timeout=10)
+            out = subprocess.run([str(binary), "--version"], capture_output=True, text=True, timeout=10,
+                                 env=engine_env())
             return json.loads(out.stdout)["data"]["version"]
         except (OSError, subprocess.SubprocessError, ValueError, KeyError):
             return None
@@ -105,7 +115,7 @@ class Engine:
         budget = int(problem.get("settings", {}).get("solve_seconds", 5)) + 30
         try:
             proc = subprocess.run([str(binary), "solve"], input=json.dumps(problem), capture_output=True,
-                                  text=True, timeout=min(self.timeout_s, budget))
+                                  text=True, timeout=min(self.timeout_s, budget), env=engine_env())
         except subprocess.TimeoutExpired:
             raise EngineError("timeout", "the engine did not finish in time; it was stopped")
         except OSError as exc:
