@@ -1,6 +1,6 @@
 manifest_version: 2
 name: solverforge-planner
-version: 0.3.0
+version: 0.3.1
 label: SolverForge Planner
 description: >
   Constraint-solved planning for Hermes. A SolverForge engine places your
