@@ -29,6 +29,12 @@ const day = n => {
   d.setDate(d.getDate() + n)
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
+// A local wall-clock stamp `minutes` before now, so "N min ago" holds at any hour of the run.
+const ago = minutes => {
+  const d = new Date(Date.now() - minutes * 60000)
+  const p = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:00`
+}
 const monday = (() => {
   const d = new Date()
   d.setHours(12, 0, 0, 0)
@@ -64,7 +70,7 @@ const proposal = (blocks, extra = {}) => ({
 
 test('the page opens on the week: calendar, applied blocks and a pending proposal', () => {
   setFixture({
-    status: status([{ source: 'google: primary', read_at: `${day(0)} 08:00:00`, window: [day(0), day(3)] }],
+    status: status([{ source: 'google: primary', read_at: ago(90), window: [day(0), day(3)] }],
                    { calendar: 'google: primary', create: 1, delete: 0 }),
     proposal: proposal([[day(0), '15:00', '16:00', 'Write report']]),
     weeks: {
@@ -148,10 +154,11 @@ test('overlaps sit side by side: double-bookings in amber, clashes with planned 
 })
 
 test('weekend columns appear only when there is something on them', () => {
-  const saturday = day(((6 - new Date().getDay()) + 7) % 7)
+  // This week's Saturday: five days after its Monday, whichever day the run falls on.
+  const saturday = day(5 - ((new Date().getDay() + 6) % 7))
   setFixture({ status: status([]), proposal: { ok: false }, weeks: {} })
   assert.doesNotMatch(text(render('page')), /Sat,/)
-  if (saturday >= monday && saturday < day(7)) {
+  {
     setFixture({
       status: status([]),
       proposal: { ok: false },
