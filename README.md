@@ -104,8 +104,8 @@ gives you an `.ics` file; importing it again updates the same events instead of 
 ![The Planner pane docked beside the chat: the plan card on the left; on the right the week with planned blocks, the pulled Google calendar, a pending proposal and the changes waiting to be pushed](docs/screenshots/planner-pane.png)
 
 - the plan card in the chat, with the score, your busy time, the proposed blocks and **Apply**;
-- a **Planner** pane beside the chat that opens on your week. It comes in by itself when Hermes
-  makes a new proposal (unless you closed it), and the **▦** chip in the status bar or the palette
+- a **Planner** pane beside the chat that opens on your week, or on the week of a pending
+  proposal. It comes in by itself when Hermes makes a new proposal (unless you closed it), and the **▦** chip in the status bar or the palette
   command **Planner: show the week** brings it back. It shows every pulled calendar in its own
   colour, with how old the copy is, every block already on your plan, and a pending proposal over them with **Apply**.
   Overlapping events sit side by side; a double-booking is marked amber, a meeting on a planned

@@ -576,24 +576,44 @@ function ReplanButton({ clashes }) {
 
 const WEEKDAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
 
+// Noon on the Monday `weeks` weeks after the one holding `date` (noon dodges DST edges).
+function mondayOf(date, weeks = 0) {
+  const d = new Date(date)
+  d.setHours(12, 0, 0, 0)
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7) + 7 * weeks)
+  return d
+}
+
+// How many weeks from this one to the week of a proposal's first block: 0 when it has none.
+export function proposalWeekOffset(plan, now = new Date()) {
+  const first = (plan?.scheduled || []).map(b => b.start).sort()[0]
+  if (!first) {
+    return 0
+  }
+  const weeks = Math.round((mondayOf(new Date(`${dayKey(first)}T12:00:00`)) - mondayOf(now)) / (7 * 86400000))
+  return Math.max(0, weeks)
+}
+
 /**
  * The user's week as the planner knows it: its own calendar (every block already on the plan),
  * the copies of the cloud calendars Hermes last pulled, and a pending proposal over them.
  */
 function WeekView({ status }) {
-  const [offset, setOffset] = useState(0)
+  const proposal = useProposal(null)
+  const pending = proposal.data?.ok && !proposal.data.applied_at ? proposal.data : null
+  // The week opens where a pending proposal is; the arrows move from there until the next one.
+  const [chosen, setChosen] = useState({ offset: 0, proposal: null })
+  const followed = pending?.proposal_id ?? null
+  const offset = followed && chosen.proposal !== followed ? proposalWeekOffset(pending) : chosen.offset
+  const setOffset = value => setChosen({ offset: value, proposal: followed })
 
-  const monday = new Date()
-  monday.setHours(12, 0, 0, 0)
-  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7) + 7 * offset)
+  const monday = mondayOf(new Date(), offset)
   const week = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(monday)
     d.setDate(d.getDate() + i)
     return { key: isoDay(d), weekday: WEEKDAY_KEYS[d.getDay()] }
   })
   const data = useWeek(week[0].key, 7)
-  const proposal = useProposal(null)
-  const pending = proposal.data?.ok && !proposal.data.applied_at ? proposal.data : null
   const events = data.data?.events || []
   const clashes = data.data?.clashes || []
   const calendarsRead = status?.calendars || []
@@ -967,21 +987,36 @@ function togglePlannerPane() {
   }
 }
 
+/**
+ * Whether a proposal read brings the week in. `seen` is the proposal the chip last knew about:
+ * undefined until the first answer, null when there was none. What was already there when the
+ * app started stays put; any proposal made after it opens the pane, the very first included,
+ * unless the user closed the pane.
+ */
+export function followProposal(seen, { loaded, proposalId, closed }) {
+  if (!loaded) {
+    return { seen, open: false }
+  }
+  if (seen === undefined) {
+    return { seen: proposalId, open: false }
+  }
+  return { seen: proposalId, open: proposalId != null && proposalId !== seen && !closed }
+}
+
 function StatusChip() {
   const query = useProposal(null)
   const plan = query.data?.ok ? query.data : null
-  const seen = useRef(null)
+  const seen = useRef(undefined)
+  const loaded = query.data != null
   const proposalId = plan?.proposal_id ?? null
   // A new proposal from the chat brings the week in, unless the user closed it.
   useEffect(() => {
-    if (proposalId == null) {
-      return
-    }
-    if (seen.current != null && proposalId !== seen.current && !closedByUser) {
+    const next = followProposal(seen.current, { loaded, proposalId, closed: closedByUser })
+    seen.current = next.seen
+    if (next.open) {
       openPlannerPane()
     }
-    seen.current = proposalId
-  }, [proposalId])
+  }, [loaded, proposalId])
   if (!query.data) {
     return null
   }

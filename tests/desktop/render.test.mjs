@@ -13,7 +13,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 const here = dirname(fileURLToPath(import.meta.url))
 mkdirSync(join(here, '.build'), { recursive: true })
 cpSync(join(here, '../../desktop/plugin.js'), join(here, '.build/plugin.mjs'))
-const { default: plugin, TasksView } = await import('./.build/plugin.mjs')
+const { default: plugin, TasksView, followProposal, proposalWeekOffset } = await import('./.build/plugin.mjs')
 
 const items = []
 plugin.register({ rest: async () => ({}), onEvent() {}, registerMany: xs => items.push(...xs), register: x => items.push(x) })
@@ -239,4 +239,41 @@ test('the tasks tab sorts tasks into to plan, on your calendar and past, and say
 test('with no tasks the tab says how to start', () => {
   const html = renderToStaticMarkup(h(TasksView, { status: status([]), inbox: { ok: true, tasks: [], order_rules: [] } }))
   assert.match(text(html), /No tasks yet ?Tell Hermes what you need to get done this week\./)
+})
+
+test('the pane opens on the week of a pending proposal, not on this week', () => {
+  const nextMonday = day(7 - ((new Date().getDay() + 6) % 7))
+  const plan = proposal([[nextMonday, '09:00', '12:00', 'Finish the deck']])
+  setFixture({
+    status: status([]),
+    proposal: plan,
+    weeks: { [nextMonday]: { ok: true, events: [{ kind: 'busy', title: 'Standup', start: `${nextMonday} 13:30:00`, end: `${nextMonday} 13:45:00` }] } }
+  })
+  const html = render('pane')
+  const shown = text(html)
+  assert.match(html, /Finish the deck {2}09:00–12:00 \(proposed\)/)
+  assert.match(html, /Standup {2}13:30–13:45 \(busy\)/)
+  assert.doesNotMatch(shown, /in other weeks/)
+  assert.equal(proposalWeekOffset(plan), 1)
+  assert.equal(proposalWeekOffset(proposal([[day(0), '15:00', '16:00', 'Today']])), 0)
+  assert.equal(proposalWeekOffset({ scheduled: [] }), 0)
+})
+
+test('a new proposal brings the week in, the first one after install included', () => {
+  const id = 'p1'
+  // Nothing answered yet: nothing to decide.
+  assert.deepEqual(followProposal(undefined, { loaded: false, proposalId: null, closed: false }), { seen: undefined, open: false })
+  // A fresh install: the first read has no proposal, then Hermes makes one.
+  let state = followProposal(undefined, { loaded: true, proposalId: null, closed: false })
+  assert.deepEqual(state, { seen: null, open: false })
+  state = followProposal(state.seen, { loaded: true, proposalId: id, closed: false })
+  assert.deepEqual(state, { seen: id, open: true })
+  // The same proposal read again does not reopen a pane the user closed.
+  assert.equal(followProposal(id, { loaded: true, proposalId: id, closed: false }).open, false)
+  // A proposal already there when the app starts stays put; the next one opens the pane.
+  state = followProposal(undefined, { loaded: true, proposalId: 'old', closed: false })
+  assert.equal(state.open, false)
+  assert.equal(followProposal(state.seen, { loaded: true, proposalId: 'new', closed: false }).open, true)
+  // Closed by the user: a new proposal leaves it closed.
+  assert.equal(followProposal('old', { loaded: true, proposalId: 'new', closed: true }).open, false)
 })
