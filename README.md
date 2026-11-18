@@ -5,7 +5,7 @@
 **Tell Hermes what you need to get done. A constraint solver fits it into your week around your
 meetings and deadlines, and proves every hard rule holds before anything goes on your calendar.**
 
-![Hermes planning a week: the request, the plan card with the solver's score, and the blocks by day](docs/screenshots/chat-plan-card.png)
+![Hermes planning a week: the request, the plan card with the solver's score and Apply, and the blocks by day](docs/screenshots/chat-plan-card.png)
 
 Ask a language model to schedule a week and you get something plausible: a deadline quietly missed,
 a task on top of a meeting, work after hours. This plugin gives Hermes a real planner. The
@@ -101,7 +101,7 @@ gives you an `.ics` file; importing it again updates the same events instead of 
 
 **In the Desktop app:**
 
-![The Planner pane: the week with planned blocks, the pulled Google calendar and the changes waiting to be pushed](docs/screenshots/planner-page.png)
+![The Planner pane docked beside the chat: the plan card on the left; on the right the week with planned blocks, the pulled Google calendar, a pending proposal and the changes waiting to be pushed](docs/screenshots/planner-pane.png)
 
 - the plan card in the chat, with the score, your busy time, the proposed blocks and **Apply**;
 - a **Planner** pane beside the chat that opens on your week. It comes in by itself when Hermes
