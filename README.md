@@ -42,8 +42,8 @@ builds a session's tool list from the plugins it saw at the previous launch, so 
 after an install has no planner tools.
 
 **In the Desktop app**, open **Capabilities → Plugins** and turn on SolverForge Planner's Desktop
-features. You get the plan card above, a **Planner** page in the sidebar, and the engine install as
-a button there.
+features. You get the plan card above, a **Planner** pane that docks beside the chat (the **▦**
+chip in the status bar shows and hides it), and the engine install as a button there.
 
 ## What you can ask
 
@@ -84,7 +84,7 @@ of their occurrences.
 **Plans that can't go stale.** A plan remembers what it was solved from. If a task or your settings
 change before you apply it, applying is refused and Hermes solves again. A meeting in the latest
 pull that overlaps a block stops the apply. A meeting that lands on a block already on your plan is
-a clash: the Planner page marks it and offers **Re-plan**, and nothing reaches your cloud calendar
+a clash: the Planner pane marks it and offers **Re-plan**, and nothing reaches your cloud calendar
 before a push, which needs a fresh pull.
 
 **On your calendar, never twice.** A push lists exactly which of the planner's events to add to your
@@ -101,15 +101,17 @@ gives you an `.ics` file; importing it again updates the same events instead of 
 
 **In the Desktop app:**
 
-![The Planner page: the week with planned blocks, the pulled Google calendar and the changes waiting to be pushed](docs/screenshots/planner-page.png)
+![The Planner pane: the week with planned blocks, the pulled Google calendar and the changes waiting to be pushed](docs/screenshots/planner-page.png)
 
 - the plan card in the chat, with the score, your busy time, the proposed blocks and **Apply**;
-- a **Planner** page that opens on your week: every pulled calendar in its own colour, with how old
-  the copy is, every block already on your plan, and a pending proposal over them with **Apply**.
+- a **Planner** pane beside the chat that opens on your week. It comes in by itself when Hermes
+  makes a new proposal (unless you closed it), and the **▦** chip in the status bar or the palette
+  command **Planner: show the week** brings it back. It shows every pulled calendar in its own
+  colour, with how old the copy is, every block already on your plan, and a pending proposal over them with **Apply**.
   Overlapping events sit side by side; a double-booking is marked amber, a meeting on a planned
   block red, with **Re-plan**. Days outside the last pull are marked, never shown as free, and the
-  page says how many changes wait to be pushed. **Solve now** sits beside it.
-  Pull and push are Hermes's, not buttons: the page can't reach your calendar tool, so it shows
+  pane says how many changes wait to be pushed. **Solve now** sits beside it.
+  Pull and push are Hermes's, not buttons: the pane can't reach your calendar tool, so it shows
   where things stand and leaves the asking to you;
 - a **Tasks** tab: what is waiting for a plan, with what shapes its placement (deadline, priority,
   task order); what is on your calendar, day by day, with how old each pulled copy is; and blocks

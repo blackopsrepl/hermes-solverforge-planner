@@ -160,4 +160,4 @@ class Engine:
 
 def install_hint() -> str:
     return ("The SolverForge engine is not installed. Run `hermes solverforge-planner install`, "
-            "type `/planner install`, or press Install on the Desktop Planner page.")
+            "type `/planner install`, or press Install in the Desktop Planner pane.")

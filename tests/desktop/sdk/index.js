@@ -4,6 +4,8 @@ import { createElement as h } from 'react'
 
 let fixture = {}
 export const submitted = []
+// Panes the plugin docked through host.openWorkspace, newest last.
+export const workspaces = []
 export const setFixture = value => {
   fixture = value
   submitted.length = 0
@@ -23,8 +25,6 @@ export const SegmentedControl = ({ options, value }) =>
   h('nav', null, options.map(o => h('b', { key: o.id, 'data-on': o.id === value }, o.label)))
 
 export const PALETTE_AREA = 'palette'
-export const ROUTES_AREA = 'routes'
-export const SIDEBAR_NAV_AREA = 'sidebar'
 export const TRANSCRIPT_DIRECTIVE_AREA = 'transcript'
 export const STATUSBAR_AREAS = { right: 'statusbar-right' }
 
@@ -33,7 +33,14 @@ export const useQueryClient = () => queryClient
 export const useMutation = () => ({ mutate() {}, mutateAsync: async () => {}, isPending: false })
 export const host = {
   notify() {},
-  navigate() {},
+  openWorkspace(id, options) {
+    const entry = { id, options, open: true }
+    workspaces.push(entry)
+    return () => {
+      entry.open = false
+      options.onClose?.()
+    }
+  },
   composer: { submit: (_, text) => submitted.push(text) > 0 }
 }
 

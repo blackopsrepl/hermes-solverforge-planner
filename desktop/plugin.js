@@ -2,8 +2,8 @@
  * SolverForge Planner — Desktop half.
  *
  * Surfaces: the ::planner{proposal="…"} plan card in the transcript, a Planner
- * page (the week: calendar, applied blocks, a pending proposal) with its sidebar row, a status-bar chip, palette commands and live
- * refresh on plugin events. Every byte of data comes from this package's own
+ * pane docked beside the chat (the week: calendar, applied blocks, a pending proposal; and the
+ * tasks), a status-bar chip that toggles it, palette commands and live refresh on plugin events. Every byte of data comes from this package's own
  * backend (dashboard/plugin_api.py) through ctx.rest; the only writes are Apply
  * and Install engine, each behind a confirmation the user answers.
  */
@@ -18,9 +18,7 @@ import {
   PALETTE_AREA,
   PanelEmpty,
   queryClient,
-  ROUTES_AREA,
   SegmentedControl,
-  SIDEBAR_NAV_AREA,
   STATUSBAR_AREAS,
   Tip,
   TRANSCRIPT_DIRECTIVE_AREA,
@@ -28,11 +26,10 @@ import {
   useQuery,
   useQueryClient
 } from '@hermes/plugin-sdk'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'solverforge-planner'
-const ROUTE = '/planner'
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const DAY_START = 7 // grid hours shown, extended to fit any block outside them
 const DAY_END = 20
@@ -480,7 +477,15 @@ function PlanCard({ attrs, streaming }) {
   if (!query.data?.ok) {
     return frame(jsx('div', { style: text('--ui-text-tertiary'), children: query.data?.error || 'Proposal unavailable.' }))
   }
-  return frame(jsx(PlanView, { plan: query.data, compact: true }))
+  return frame(
+    jsxs('div', {
+      style: { display: 'flex', flexDirection: 'column', gap: 8 },
+      children: [
+        jsx(PlanView, { plan: query.data, compact: true }),
+        jsx('div', { children: jsx(Button, { size: 'xs', variant: 'secondary', onClick: openPlannerPane, children: 'Show the week beside the chat' }) })
+      ]
+    })
+  )
 }
 
 
@@ -865,7 +870,7 @@ export function TasksView({ status, inbox }) {
   })
 }
 
-function PlannerPage() {
+function PlannerPane() {
   const [tab, setTab] = useState('week')
   const client = useQueryClient()
   const status = useQuery({ queryKey: qk('status'), queryFn: () => rest('/status'), staleTime: 10_000 })
@@ -906,12 +911,11 @@ function PlannerPage() {
   }
 
   return jsxs('div', {
-    style: { display: 'flex', flexDirection: 'column', gap: 12, padding: 16, height: '100%', overflow: 'auto' },
+    style: { display: 'flex', flexDirection: 'column', gap: 12, padding: 14, height: '100%', minHeight: 0, overflow: 'auto' },
     children: [
       jsxs('div', {
-        style: { display: 'flex', alignItems: 'center', gap: 10 },
+        style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
         children: [
-          jsx('span', { style: { ...text('--ui-text-primary', '0.95rem'), fontWeight: 600 }, children: 'Planner' }),
           jsx(SegmentedControl, {
             value: tab,
             onChange: setTab,
@@ -936,25 +940,69 @@ function PlannerPage() {
   })
 }
 
+// The plan is talked into existence in the chat; the week docks beside it.
+let closePane = null
+let closedByUser = false
+function openPlannerPane() {
+  if (closePane || typeof host.openWorkspace !== 'function') {
+    return
+  }
+  closedByUser = false
+  closePane = host.openWorkspace(`${ID}:week`, {
+    title: 'SolverForge Planner',
+    minWidth: '30rem',
+    dock: { pane: 'workspace', pos: 'right' },
+    render: () => jsx(PlannerPane, {}),
+    onClose: () => {
+      closePane = null
+      closedByUser = true
+    }
+  })
+}
+function togglePlannerPane() {
+  if (closePane) {
+    closePane()
+  } else {
+    openPlannerPane()
+  }
+}
+
 function StatusChip() {
   const query = useProposal(null)
   const plan = query.data?.ok ? query.data : null
-  if (!plan) {
+  const seen = useRef(null)
+  const proposalId = plan?.proposal_id ?? null
+  // A new proposal from the chat brings the week in, unless the user closed it.
+  useEffect(() => {
+    if (proposalId == null) {
+      return
+    }
+    if (seen.current != null && proposalId !== seen.current && !closedByUser) {
+      openPlannerPane()
+    }
+    seen.current = proposalId
+  }, [proposalId])
+  if (!query.data) {
     return null
   }
-  const pending = plan.can_apply && !plan.applied_at && plan.scheduled.length
+  const pending = plan && plan.can_apply && !plan.applied_at && plan.scheduled.length
   const stamp = nowStamp()
-  const next = plan.applied_at ? plan.scheduled.find(b => b.end > stamp) : null
-  const label = pending ? `▦ ${plan.scheduled.length} to approve` : next ? `▦ ${hhmm(next.start)} ${next.title}` : null
-  if (!label) {
-    return null
-  }
+  const next = plan?.applied_at ? plan.scheduled.find(b => b.end > stamp) : null
+  const label = pending ? `▦ ${plan.scheduled.length} to approve` : next ? `▦ ${hhmm(next.start)} ${next.title}` : '▦ Planner'
+  const action = closePane ? 'Hide the week' : 'Show the week beside the chat'
   return jsx(Tip, {
-    label: pending ? `Proposal ${plan.score} is waiting for approval` : `Next planned block: ${next.day}`,
+    label: pending ? `Proposal ${plan.score} is waiting for approval · ${action}` : next ? `Next planned block: ${next.day} · ${action}` : action,
     children: jsx('button', {
       type: 'button',
-      onClick: () => host.navigate(ROUTE),
-      style: { ...text(pending ? '--ui-accent' : '--ui-text-tertiary', '0.6875rem'), padding: '0 6px', height: '100%' },
+      onClick: togglePlannerPane,
+      style: {
+        ...text(pending ? '--ui-accent' : '--ui-text-tertiary', '0.6875rem'),
+        padding: '0 6px',
+        height: '100%',
+        background: 'none',
+        border: 0,
+        cursor: 'pointer'
+      },
       children: label
     })
   })
@@ -963,11 +1011,11 @@ function StatusChip() {
 export default {
   id: ID,
   name: 'SolverForge Planner',
-  description: 'Constraint-solved plans: transcript plan cards, a Planner page and a status chip.',
+  description: 'Constraint-solved plans: transcript plan cards, a Planner pane beside the chat and a status chip.',
   register(ctx) {
     rest = (path, opts) => ctx.rest(path, opts)
 
-    // Tools broadcast when the plan changes, so every open card and page refreshes at once.
+    // Tools broadcast when the plan changes, so every open card and the pane refresh at once.
     const refresh = () => queryClient.invalidateQueries({ queryKey: [ID] })
     ctx.onEvent(`plugin.${ID}.changed`, refresh)
 
@@ -977,13 +1025,16 @@ export default {
         area: TRANSCRIPT_DIRECTIVE_AREA,
         data: { name: 'planner', render: props => jsx(PlanCard, props) }
       },
-      { id: 'page', area: ROUTES_AREA, title: 'Planner', data: { path: ROUTE }, render: () => jsx(PlannerPage, {}) },
-      { id: 'nav', area: SIDEBAR_NAV_AREA, data: { path: ROUTE, label: 'Planner', codicon: 'calendar' } },
       { id: 'chip', area: STATUSBAR_AREAS.right, order: 125, render: () => jsx(StatusChip, {}) },
       {
         id: 'open',
         area: PALETTE_AREA,
-        data: { id: 'solverforge-planner.open', label: 'Planner: open', keywords: ['plan', 'calendar', 'schedule'], run: () => host.navigate(ROUTE) }
+        data: {
+          id: 'solverforge-planner.open',
+          label: 'Planner: show the week',
+          keywords: ['plan', 'calendar', 'schedule', 'week', 'tasks'],
+          run: openPlannerPane
+        }
       },
       {
         id: 'solve',
@@ -1000,7 +1051,7 @@ export default {
                   ? { kind: 'success', message: `Planner: proposal ${result.score}` }
                   : { kind: 'error', message: `Planner: ${plainError(result, 'solve failed')}` }
               )
-              host.navigate(ROUTE)
+              openPlannerPane()
             })
         }
       }

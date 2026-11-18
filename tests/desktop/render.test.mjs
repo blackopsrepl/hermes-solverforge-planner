@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { setFixture } from '@hermes/plugin-sdk'
+import { setFixture, workspaces } from '@hermes/plugin-sdk'
 import { createElement as h } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 
@@ -17,7 +17,18 @@ const { default: plugin, TasksView } = await import('./.build/plugin.mjs')
 
 const items = []
 plugin.register({ rest: async () => ({}), onEvent() {}, registerMany: xs => items.push(...xs), register: x => items.push(x) })
+// The week and tasks live in a pane docked beside the chat, opened by the palette command.
+const openPane = () => items.find(i => i.id === 'open').data.run()
+const pane = () => {
+  openPane()
+  const docked = workspaces.filter(w => w.open)
+  assert.equal(docked.length, 1)
+  return docked[0]
+}
 const render = id => {
+  if (id === 'pane') {
+    return renderToStaticMarkup(h(() => pane().options.render()))
+  }
   const item = items.find(i => i.id === id)
   return renderToStaticMarkup(h(() => (item.render ? item.render() : item.data.render(item.props))))
 }
@@ -68,7 +79,7 @@ const proposal = (blocks, extra = {}) => ({
   ...extra
 })
 
-test('the page opens on the week: calendar, applied blocks and a pending proposal', () => {
+test('the pane opens on the week: calendar, applied blocks and a pending proposal', () => {
   setFixture({
     status: status([{ source: 'google: primary', read_at: ago(90), window: [day(0), day(3)] }],
                    { calendar: 'google: primary', create: 1, delete: 0 }),
@@ -83,7 +94,7 @@ test('the page opens on the week: calendar, applied blocks and a pending proposa
       }
     }
   })
-  const html = render('page')
+  const html = render('pane')
   const shown = text(html)
   assert.match(html, /data-on="true">Week</)
   assert.match(shown, /This week/)
@@ -103,7 +114,7 @@ test('days after the last read are marked unread; past days are not', () => {
     proposal: { ok: false },
     weeks: {}
   })
-  const html = render('page')
+  const html = render('pane')
   const later = [1, 2, 3, 4, 5, 6].map(day).filter(d => d < day(7 - ((new Date().getDay() + 6) % 7)))
   const columns = (html.match(/repeating-linear-gradient/g) || []).length
   const unreadWorkdays = later.filter(d => [1, 2, 3, 4, 5].includes(new Date(`${d}T12:00:00`).getDay()))
@@ -113,7 +124,7 @@ test('days after the last read are marked unread; past days are not', () => {
 
 test('with no calendar pulled the week says so instead of looking free', () => {
   setFixture({ status: status([]), proposal: { ok: false }, weeks: {} })
-  const shown = text(render('page'))
+  const shown = text(render('pane'))
   assert.match(shown, /No calendar pulled\. Ask Hermes to pull your calendar, or tell it when you are busy\./)
   assert.doesNotMatch(shown, /to push to|Refresh|Pull/)
 })
@@ -140,7 +151,7 @@ test('overlaps sit side by side: double-bookings in amber, clashes with planned 
       }
     }
   })
-  const html = render('page')
+  const html = render('pane')
   const shown = text(html)
   if (d >= day(7 - ((new Date().getDay() + 6) % 7))) return // tomorrow is next week: nothing to draw here
   assert.equal((html.match(/data-mark="double-booked"/g) || []).length, 2, 'standup and dentist overlap')
@@ -157,14 +168,14 @@ test('weekend columns appear only when there is something on them', () => {
   // This week's Saturday: five days after its Monday, whichever day the run falls on.
   const saturday = day(5 - ((new Date().getDay() + 6) % 7))
   setFixture({ status: status([]), proposal: { ok: false }, weeks: {} })
-  assert.doesNotMatch(text(render('page')), /Sat,/)
+  assert.doesNotMatch(text(render('pane')), /Sat,/)
   {
     setFixture({
       status: status([]),
       proposal: { ok: false },
       weeks: { [monday]: { ok: true, events: [{ kind: 'busy', title: 'Hike', start: `${saturday} 10:00:00`, end: `${saturday} 12:00:00` }] } }
     })
-    assert.match(text(render('page')), /Sat,/)
+    assert.match(text(render('pane')), /Sat,/)
   }
 })
 
@@ -173,6 +184,24 @@ test('the chat plan card renders the proposal it names', () => {
   const item = items.find(i => i.id === 'plan-card')
   item.props = { attrs: { proposal: '808f1223-73c5-4a48-bade-076a05225e07' } }
   assert.match(text(render('plan-card')), /Plan proposal 0hard\/0medium\/0soft 1 placed/)
+  assert.match(text(render('plan-card')), /Show the week beside the chat/)
+})
+
+test('the planner docks beside the chat: no page, no sidebar row, one pane however often it is opened', () => {
+  assert.deepEqual(items.map(i => i.area).sort(), ['palette', 'palette', 'statusbar-right', 'transcript'])
+  openPane()
+  openPane()
+  const docked = pane()
+  assert.equal(docked.id, 'solverforge-planner:week')
+  assert.equal(docked.options.title, 'SolverForge Planner')
+  assert.deepEqual(docked.options.dock, { pane: 'workspace', pos: 'right' })
+})
+
+test('the status chip is always there to bring the week in', () => {
+  setFixture({ status: status([]), proposal: { ok: false, error: 'no proposal yet' }, weeks: {} })
+  assert.match(text(render('chip')), /▦ Planner/)
+  setFixture({ status: status([]), proposal: proposal([[day(1), '09:00', '10:00', 'Deck']]), weeks: {} })
+  assert.match(text(render('chip')), /▦ 1 to approve/)
 })
 
 test('the tasks tab sorts tasks into to plan, on your calendar and past, and says how old the calendar is', () => {
